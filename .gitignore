@@ -1,0 +1,13 @@
+# Environment variables
+.env
+
+# Local database and models cache
+chroma_db/
+.chroma/
+.cache/
+__pycache__/
+*.pyc
+
+# Local log files and OS artifacts
+*.log
+.DS_Store
