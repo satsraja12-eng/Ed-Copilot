@@ -69,45 +69,48 @@ def classify_intent(state: EdCopilotState) -> EdCopilotState:
     }
 
 
-def math_specialist(state: EdCopilotState) -> EdCopilotState:
-    from src.retrieval import get_hybrid_retriever
+def _make_math_specialist(retriever):
+    """Return a math_specialist node that uses the provided cached retriever."""
 
-    last_message = state["messages"][-1]["content"]
-    persona = state.get("persona", "student").lower()
-    persona_instruction = PERSONA_INSTRUCTIONS.get(persona, PERSONA_INSTRUCTIONS["student"])
+    def math_specialist(state: EdCopilotState) -> EdCopilotState:
+        last_message = state["messages"][-1]["content"]
+        persona = state.get("persona", "student").lower()
+        persona_instruction = PERSONA_INSTRUCTIONS.get(
+            persona, PERSONA_INSTRUCTIONS["student"]
+        )
 
-    retriever = get_hybrid_retriever()
-    docs = retriever.invoke(last_message)
+        docs = retriever.invoke(last_message)
+        context = "\n\n".join(
+            [f"[{doc.metadata.get('standard_id')}] {doc.page_content}" for doc in docs]
+        )
 
-    context = "\n\n".join(
-        [f"[{doc.metadata.get('standard_id')}] {doc.page_content}" for doc in docs]
-    )
+        llm = _get_llm()
+        math_prompt = ChatPromptTemplate.from_messages([
+            ("system", (
+                "You are a Math Curriculum Expert for NC schools.\n"
+                "{persona_instruction}\n"
+                "Answer using ONLY the provided educational standards context.\n"
+                "If the context does not contain the answer, say "
+                "'I cannot find this in our syllabus, please ask your teacher.'\n\n"
+                "Context:\n{context}"
+            )),
+            ("human", "{question}"),
+        ])
 
-    llm = _get_llm()
-    math_prompt = ChatPromptTemplate.from_messages([
-        ("system", (
-            "You are a Math Curriculum Expert for NC schools.\n"
-            "{persona_instruction}\n"
-            "Answer using ONLY the provided educational standards context.\n"
-            "If the context does not contain the answer, say "
-            "'I cannot find this in our syllabus, please ask your teacher.'\n\n"
-            "Context:\n{context}"
-        )),
-        ("human", "{question}"),
-    ])
+        chain = math_prompt | llm | StrOutputParser()
+        response = chain.invoke({
+            "persona_instruction": persona_instruction,
+            "context": context,
+            "question": last_message,
+        })
 
-    chain = math_prompt | llm | StrOutputParser()
-    response = chain.invoke({
-        "persona_instruction": persona_instruction,
-        "context": context,
-        "question": last_message,
-    })
+        return {
+            **state,
+            "context_docs": docs,
+            "response": response,
+        }
 
-    return {
-        **state,
-        "context_docs": docs,
-        "response": response,
-    }
+    return math_specialist
 
 
 def admin_specialist(state: EdCopilotState) -> EdCopilotState:
@@ -143,11 +146,18 @@ def _route_intent(state: EdCopilotState) -> str:
     return state["intent"]
 
 
-def build_graph() -> StateGraph:
+def build_graph(retriever):
+    """Compile the Ed-Copilot StateGraph.
+
+    Args:
+        retriever: A pre-initialised WakeCountyRetriever (cached by the
+                   caller via @st.cache_resource) so it is never rebuilt
+                   per request.
+    """
     graph = StateGraph(EdCopilotState)
 
     graph.add_node("classify_intent", classify_intent)
-    graph.add_node("math_specialist", math_specialist)
+    graph.add_node("math_specialist", _make_math_specialist(retriever))
     graph.add_node("admin_specialist", admin_specialist)
     graph.add_node("guidance_stub", guidance_stub)
     graph.add_node("out_of_scope_handler", out_of_scope_handler)

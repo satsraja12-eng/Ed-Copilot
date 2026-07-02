@@ -1,5 +1,6 @@
 import streamlit as st
 from src.orchestrator import build_graph, EdCopilotState
+from src.retrieval import get_hybrid_retriever
 import os
 from dotenv import load_dotenv
 
@@ -16,15 +17,22 @@ st.warning(
     icon="📋",
 )
 
+@st.cache_resource(show_spinner="Loading retrieval pipeline...")
+def init_retriever():
+    return get_hybrid_retriever()
+
+
 @st.cache_resource(show_spinner="Initializing Ed-Copilot...")
-def init_graph():
+def init_graph(_retriever):
     api_key = os.environ.get("NEBIUS_API_KEY", "")
     if not api_key or api_key == "your-key-here":
         st.error("Please add your NEBIUS_API_KEY to the .env file.")
         st.stop()
-    return build_graph()
+    return build_graph(_retriever)
 
-graph = init_graph()
+
+retriever = init_retriever()
+graph = init_graph(retriever)
 
 with st.sidebar:
     st.header("⚙️ Settings")
