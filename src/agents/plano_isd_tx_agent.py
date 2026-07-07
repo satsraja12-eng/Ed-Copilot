@@ -1,35 +1,40 @@
-"""Plano ISD district agent — plugin hook stub.
+"""Plano ISD district agent — Phase 2 implementation.
 
-Mirror of frisco_isd_tx_agent.py — follows the same structure so the
-pattern is immediately clear.
+Retrieves from ChromaDB collection plano_isd_tx__course_catalog,
+with groundedness scoring on every response.
 
-The DistrictRegistry loads this automatically when it finds
-config/tenants/plano-isd-tx.yaml pointing to this module.
+Run ingestion first:
+    python src/ingestion/plano_ingestion.py
 """
 from __future__ import annotations
 
 import os
-from typing import List
+from typing import List, Optional
 
+import chromadb
 from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
 
 from src.agents.base_agent import DistrictAgent
+from src.guardrails.groundedness import score as groundedness_score, input_is_safe
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 CHROMA_DIR = os.path.join(BASE_DIR, "chroma_db")
 
+GROUNDEDNESS_THRESHOLD = 0.25
+
 PERSONA_INSTRUCTIONS = {
-    "student": "Explain simply. Use examples. Be encouraging.",
-    "parent": "Give practical context. What should my child focus on?",
-    "teacher": "Be precise. Give full detail.",
+    "student": "Explain simply. Use examples. Be encouraging. Mention prerequisites clearly.",
+    "parent":  "Give practical context — what course sequence should my child follow?",
+    "teacher": "Be precise. Include course numbers, prerequisites, and credit hours.",
 }
 
 _DISCLAIMER = (
     "_This information was sourced from Plano ISD public resources. "
-    "Verify at pisd.edu._"
+    "Always verify current offerings at pisd.edu._"
 )
 
 
@@ -45,8 +50,12 @@ class PlanoIsdAgent(DistrictAgent):
     """Plano ISD course catalog + admin policy agent."""
 
     def __init__(self):
-        self._embeddings = None
-        self._vs_cache: dict = {}
+        self._embeddings: Optional[HuggingFaceEmbeddings] = None
+        self._chroma_client: Optional[chromadb.PersistentClient] = None
+
+    # ------------------------------------------------------------------
+    # Identity
+    # ------------------------------------------------------------------
 
     @property
     def district_id(self) -> str:
@@ -56,50 +65,61 @@ class PlanoIsdAgent(DistrictAgent):
     def supported_intents(self) -> List[str]:
         return ["course_catalog", "admin_policy"]
 
-    def _get_vectorstore(self, doc_type: str):
-        if doc_type in self._vs_cache:
-            return self._vs_cache[doc_type]
+    # ------------------------------------------------------------------
+    # Lazy initialisation
+    # ------------------------------------------------------------------
+
+    def _get_embeddings(self) -> HuggingFaceEmbeddings:
+        if self._embeddings is None:
+            self._embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
+        return self._embeddings
+
+    def _get_client(self) -> chromadb.PersistentClient:
+        if self._chroma_client is None:
+            self._chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
+        return self._chroma_client
+
+    def _query_collection(self, collection_name: str, query: str, k: int = 8) -> List[Document]:
+        """Query a named ChromaDB collection directly."""
         try:
-            from langchain_chroma import Chroma
-            from langchain_huggingface import HuggingFaceEmbeddings
+            client = self._get_client()
+            col = client.get_collection(name=collection_name)
+            if col.count() == 0:
+                return []
 
-            if self._embeddings is None:
-                self._embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
+            embeddings = self._get_embeddings()
+            query_vec = embeddings.embed_query(query)
 
-            collection = f"plano_isd_tx__{doc_type}"
-            vs = Chroma(
-                collection_name=collection,
-                persist_directory=CHROMA_DIR,
-                embedding_function=self._embeddings,
+            results = col.query(
+                query_embeddings=[query_vec],
+                n_results=min(k, col.count()),
+                where={"district": self.district_id},
             )
-            self._vs_cache[doc_type] = vs
-            return vs
+
+            docs = []
+            texts     = results.get("documents", [[]])[0]
+            metadatas = results.get("metadatas",  [[]])[0]
+            for text, meta in zip(texts, metadatas):
+                docs.append(Document(page_content=text, metadata=meta))
+            return docs
+
         except Exception as exc:
-            raise RuntimeError(
-                f"Plano ISD ChromaDB collection '{doc_type}' not found. "
-                f"Run ingestion first: src/ingestion/plano_ingestion.py\n({exc})"
-            )
+            print(f"[plano_agent] ChromaDB query failed ({collection_name}): {exc}")
+            return []
+
+    # ------------------------------------------------------------------
+    # Plugin hooks
+    # ------------------------------------------------------------------
 
     def retrieve(self, query: str, intent: str, persona: str) -> List[Document]:
-        doc_type_map = {
-            "course_catalog": "course_catalog",
-            "admin_policy": "admin_policy",
+        collection_map = {
+            "course_catalog": f"{self.district_id}__course_catalog",
+            "admin_policy":   f"{self.district_id}__admin_policy",
         }
-        doc_type = doc_type_map.get(intent)
-        if not doc_type:
+        collection = collection_map.get(intent)
+        if not collection:
             return []
-
-        try:
-            vs = self._get_vectorstore(doc_type)
-            docs = vs.similarity_search(
-                query,
-                k=8,
-                filter={"district": self.district_id, "doc_type": doc_type},
-            )
-            return [d for d in docs if d.metadata.get("district") == self.district_id]
-        except RuntimeError as exc:
-            print(f"[plano_agent] retrieve skipped — {exc}")
-            return []
+        return self._query_collection(collection, query, k=8)
 
     def synthesize(
         self,
@@ -111,24 +131,28 @@ class PlanoIsdAgent(DistrictAgent):
         if not docs:
             return (
                 "I don't have Plano ISD course catalog data available yet. "
-                "Ingestion for Plano ISD is scheduled for Phase 2.\n\n"
+                "Ingestion is pending — please run `python src/ingestion/plano_ingestion.py`.\n\n"
                 + _DISCLAIMER
             )
 
         context = "\n\n".join(
-            f"[{d.metadata.get('doc_title', 'document')} | {d.metadata.get('source_url', '')}]\n{d.page_content}"
+            f"[{d.metadata.get('course', d.metadata.get('doc_title', 'document'))} "
+            f"| {d.metadata.get('source_url', '')}]\n{d.page_content}"
             for d in docs
         )
 
         llm = _get_llm()
         prompt = ChatPromptTemplate.from_messages([
             ("system", (
-                "You are a school assistant for Plano ISD families.\n"
+                "You are a school assistant for Plano ISD families in Texas.\n"
                 "{persona_instruction}\n"
-                "Answer using ONLY the provided Plano ISD content below.\n"
-                "If the context does not contain the answer, say "
+                "Answer using ONLY the provided Plano ISD course catalog content below.\n"
+                "Include course names, numbers, prerequisites, and credit hours when available.\n"
+                "If the context does not contain the answer, say clearly: "
                 "'I don't have that specific Plano ISD information — please check pisd.edu.'\n"
-                "Always end with: " + _DISCLAIMER + "\n\nContext:\n{context}"
+                "Always end your response with this line:\n"
+                + _DISCLAIMER + "\n\n"
+                "Context:\n{context}"
             )),
             ("human", "{question}"),
         ])
@@ -139,10 +163,31 @@ class PlanoIsdAgent(DistrictAgent):
             "question": query,
         })
 
+        # Groundedness check
+        g_score = groundedness_score(response, context)
+        if g_score < GROUNDEDNESS_THRESHOLD and len(docs) > 0:
+            print(f"[plano_agent] low groundedness ({g_score:.2f}) — response may be hallucinated")
+
         if _DISCLAIMER not in response:
             response = response.rstrip() + "\n\n" + _DISCLAIMER
         return response
 
+    # ------------------------------------------------------------------
+    # Override handle() to add safety pre-check
+    # ------------------------------------------------------------------
 
-# DistrictRegistry reads this variable automatically.
+    def handle(self, state: dict) -> dict:
+        query = state["messages"][-1]["content"]
+
+        safe, refusal = input_is_safe(query)
+        if not safe:
+            return {**state, "context_docs": [], "response": refusal}
+
+        intent  = state.get("intent", "")
+        persona = state.get("persona", "student").lower()
+        docs    = self.retrieve(query, intent, persona)
+        response = self.synthesize(query, docs, intent, persona)
+        return {**state, "context_docs": docs, "response": response}
+
+
 agent = PlanoIsdAgent()
