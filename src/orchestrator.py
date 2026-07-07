@@ -121,6 +121,110 @@ def out_of_scope_handler(state: EdCopilotState) -> EdCopilotState:
 
 
 # ---------------------------------------------------------------------------
+# Backward-compat: admin_specialist as a standalone function
+# Tests patch src.orchestrator._get_admin_vectorstore / _get_llm directly so
+# these helpers must remain in this module rather than only in wake_county_agent.
+# ---------------------------------------------------------------------------
+
+_ADMIN_DB_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "chroma_db_admin")
+_DISCLAIMER = (
+    "_This information was scraped from public district websites. "
+    "Verify at your district's official website._"
+)
+
+_ADMIN_PERSONA = {
+    "student": "Give a brief, direct answer. Keep it simple and friendly.",
+    "parent": "Summarize the key points and list any action items for the family.",
+    "teacher": "Provide the full policy text and include the source link.",
+}
+
+
+def _get_admin_vectorstore():
+    from langchain_chroma import Chroma
+    from langchain_huggingface import HuggingFaceEmbeddings
+    embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
+    return Chroma(
+        collection_name="admin_docs",
+        persist_directory=_ADMIN_DB_DIR,
+        embedding_function=embeddings,
+    )
+
+
+def admin_specialist(state: EdCopilotState) -> EdCopilotState:
+    """Standalone admin policy node — kept for backward compatibility with tests.
+
+    The district plugin graph routes through WakeCountyAgent.handle() instead,
+    but this function is preserved so existing tests and call sites that import
+    ``admin_specialist`` from ``src.orchestrator`` continue to work.
+    """
+    from langchain_core.prompts import ChatPromptTemplate
+    from langchain_core.output_parsers import StrOutputParser
+
+    query = state["messages"][-1]["content"]
+    persona = state.get("persona", "parent").lower()
+    district = state.get("district", "wake_county_nc")
+    persona_instruction = _ADMIN_PERSONA.get(persona, _ADMIN_PERSONA["parent"])
+
+    if not os.path.exists(_ADMIN_DB_DIR):
+        return {
+            **state,
+            "context_docs": [],
+            "response": (
+                "Admin content has not been ingested yet. "
+                "Please run `python src/admin_ingestion.py` to populate the knowledge base."
+            ),
+        }
+
+    try:
+        admin_vs = _get_admin_vectorstore()
+        docs = admin_vs.similarity_search(query, k=5, filter={"district": district})
+        docs = [d for d in docs if d.metadata.get("district") == district]
+    except Exception as exc:
+        return {**state, "context_docs": [], "response": f"Could not retrieve admin content: {exc}"}
+
+    if not docs:
+        return {
+            **state,
+            "context_docs": [],
+            "response": (
+                "I don't have specific information about that for the selected district. "
+                "Please check your district's official website for the most current details.\n\n"
+                + _DISCLAIMER
+            ),
+        }
+
+    context = "\n\n".join(
+        f"[{d.metadata.get('label', 'document')} | {d.metadata.get('source_url', '')}]\n{d.page_content}"
+        for d in docs
+    )
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", (
+            "You are a District Policy Expert for a school assistant.\n"
+            "{persona_instruction}\n"
+            "Answer using ONLY the provided district content below.\n"
+            "If the context does not contain the answer, say "
+            "'I don't have that specific information — please check the district's official website.'\n"
+            "Always end your response with this disclaimer on its own line:\n"
+            + _DISCLAIMER + "\n\nContext:\n{context}"
+        )),
+        ("human", "{question}"),
+    ])
+
+    chain = prompt | _get_llm() | StrOutputParser()
+    response = chain.invoke({
+        "persona_instruction": persona_instruction,
+        "context": context,
+        "question": query,
+    })
+
+    if _DISCLAIMER not in response:
+        response = response.rstrip() + "\n\n" + _DISCLAIMER
+
+    return {**state, "context_docs": docs, "response": response}
+
+
+# ---------------------------------------------------------------------------
 # Graph builder — registry-driven, zero hardcoding per district
 # ---------------------------------------------------------------------------
 
