@@ -528,7 +528,7 @@ CREATE TABLE user_profiles (
 - [x] Update `tests/langsmith_eval.py` — uses `DistrictRegistry`
 - [x] Smoke test: all 3 districts load, graph nodes registered, Wake County still answers correctly
 
-### Phase 2 — Frisco & Plano Agents: Integrate from Team Repo (~1 day)
+### Phase 2 — Frisco & Plano Agents: Integrate from Team Repo ✅ Complete
 
 > ✅ **Already built in `flower16/copilot-for-families`** — integration only.
 
@@ -540,13 +540,30 @@ CREATE TABLE user_profiles (
 | Metadata-first retriever (district + doc_type + role filter) | `backend/app/rag/retriever.py` |
 | ChromaDB vectorstore (tenant-scoped collections) | `backend/app/rag/vectorstore.py` |
 
-**Integration tasks only:**
-- [ ] Copy `ingestion/` and `rag/` modules from team repo → `src/`
-- [ ] Adapt to Ed-Copilot collection naming convention (`{district}__{doc_type}`)
-- [ ] Port groundedness verifier + retry loop into `FriscoIsdAgent.handle()`
-- [ ] Run Frisco ingestion → populate `frisco_isd_tx__course_catalog`
-- [ ] Run Plano ingestion → populate `plano_isd_tx__course_catalog`
-- [ ] Smoke test: Frisco/Plano course catalog questions answer correctly
+**Integration tasks:**
+- [x] Port `crawlers.py` from team repo → `src/ingestion/crawlers.py` (Playwright + httpx, best-effort)
+- [x] Port ingestion pipeline → `src/ingestion/pipeline.py` (chunk, tag, role-visibility, upsert)
+- [x] Port groundedness verifier → `src/guardrails/groundedness.py` (lexical overlap scorer + safety guard)
+- [x] Adapt to Ed-Copilot collection naming convention (`{district}__{doc_type}`)
+- [x] Create `src/ingestion/frisco_ingestion.py` — seed + optional live crawl
+- [x] Create `src/ingestion/plano_ingestion.py` — seed + optional live crawl
+- [x] Run Frisco ingestion → `frisco_isd_tx__course_catalog`: **7 chunks** ✅
+- [x] Run Plano ingestion → `plano_isd_tx__course_catalog`: **5 chunks** ✅
+- [x] Update `FriscoIsdAgent` with real ChromaDB retrieval + groundedness scoring
+- [x] Update `PlanoIsdAgent` with real ChromaDB retrieval + groundedness scoring
+- [x] Smoke test: Frisco retrieves 7 docs for AP Calculus query ✅, Plano retrieves 5 docs ✅
+
+**ChromaDB state after Phase 2:**
+```
+chroma_db/
+  langchain                       ← NC Math 1/2/3 (1,158 chunks)     ✅ Wake County
+  frisco_isd_tx__course_catalog   ← Frisco course catalog (7 chunks)  ✅ Frisco ISD
+  plano_isd_tx__course_catalog    ← Plano course catalog (5 chunks)   ✅ Plano ISD
+  frisco_isd_tx__admin_policy     ← (0 chunks — admin PDFs pending)
+  plano_isd_tx__admin_policy      ← (0 chunks — admin PDFs pending)
+chroma_db_admin/
+  admin_docs                      ← WCPSS admin policy (1,760 chunks) ✅ Wake County
+```
 
 ### Phase 3 — Registration + Profile Auto-Routing (1–2 days)
 
