@@ -1,6 +1,6 @@
 import streamlit as st
 from src.orchestrator import build_graph, EdCopilotState
-from src.retrieval import get_hybrid_retriever
+from src.district_registry import DistrictRegistry
 import os
 import json
 from datetime import datetime, timezone
@@ -23,22 +23,22 @@ st.warning(
     icon="📋",
 )
 
-@st.cache_resource(show_spinner="Loading retrieval pipeline...")
-def init_retriever():
-    return get_hybrid_retriever()
+@st.cache_resource(show_spinner="Loading district agents...")
+def init_registry():
+    return DistrictRegistry()
 
 
 @st.cache_resource(show_spinner="Initializing Ed-Copilot...")
-def init_graph(_retriever):
+def init_graph(_registry):
     api_key = os.environ.get("NEBIUS_API_KEY", "")
     if not api_key or api_key == "your-key-here":
         st.error("Please add your NEBIUS_API_KEY to the .env file.")
         st.stop()
-    return build_graph(_retriever)
+    return build_graph(_registry)
 
 
-retriever = init_retriever()
-graph = init_graph(retriever)
+registry = init_registry()
+graph = init_graph(registry)
 
 with st.sidebar:
     st.header("⚙️ Settings")
@@ -50,14 +50,11 @@ with st.sidebar:
         key="persona",
     )
 
+    _district_names = registry.display_names()
     district = st.selectbox(
         "District",
-        options=["wake_county_nc", "frisco_isd_tx", "plano_isd_tx"],
-        format_func=lambda x: {
-            "wake_county_nc": "Wake County NC",
-            "frisco_isd_tx": "Frisco ISD TX",
-            "plano_isd_tx": "Plano ISD TX",
-        }[x],
+        options=list(_district_names.keys()),
+        format_func=lambda x: _district_names.get(x, x),
         key="district",
     )
 
