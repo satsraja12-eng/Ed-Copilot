@@ -3,6 +3,8 @@ from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_openai import ChatOpenAI
+from langchain_chroma import Chroma
+from langchain_huggingface import HuggingFaceEmbeddings
 from langgraph.graph import StateGraph, END
 import os
 
@@ -17,10 +19,64 @@ class EdCopilotState(TypedDict):
     intent_badge: str
 
 
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+ADMIN_DB_DIR = os.path.join(BASE_DIR, "chroma_db_admin")
+
 PERSONA_INSTRUCTIONS = {
     "student": "Explain simply. Use examples. Be encouraging.",
     "parent": "Give practical context. What should my child focus on?",
     "teacher": "Be precise. Reference the specific standard ID. Give full detail.",
+}
+
+# NC Math standard codes follow the Common Core domain convention, e.g.
+# "NC.M1.A-CED.2" -> domain token "A-CED". Map each domain token to a
+# plain-English name so students/parents can relate to a standard code
+# immediately (e.g. "Creating Equations (NC.M1.A-CED.2)") instead of just
+# seeing an opaque alphanumeric ID.
+STANDARD_DOMAIN_NAMES = {
+    "N-RN": "The Real Number System",
+    "N-Q": "Quantities",
+    "N-CN": "The Complex Number System",
+    "A-SSE": "Seeing Structure in Expressions",
+    "A-APR": "Arithmetic with Polynomials and Rational Expressions",
+    "A-CED": "Creating Equations",
+    "A-REI": "Reasoning with Equations and Inequalities",
+    "F-IF": "Interpreting Functions",
+    "F-BF": "Building Functions",
+    "F-LE": "Linear, Quadratic, and Exponential Models",
+    "F-TF": "Trigonometric Functions",
+    "G-CO": "Congruence",
+    "G-SRT": "Similarity, Right Triangles, and Trigonometry",
+    "G-C": "Circles",
+    "G-GPE": "Expressing Geometric Properties with Equations",
+    "G-GMD": "Geometric Measurement and Dimension",
+    "G-MG": "Modeling with Geometry",
+    "S-ID": "Interpreting Categorical and Quantitative Data",
+    "S-CP": "Conditional Probability and the Rules of Probability",
+    "S-IC": "Making Inferences and Justifying Conclusions",
+    "S-MD": "Using Probability to Make Decisions",
+}
+
+
+def describe_standard_id(standard_id: str) -> str:
+    """Return a human-friendly label for a standard ID, e.g.
+    'NC.M1.A-CED.2' -> 'Creating Equations (NC.M1.A-CED.2)'.
+    Falls back to the raw ID if the domain token isn't recognized.
+    """
+    if not standard_id:
+        return "Unknown Standard"
+    parts = standard_id.split(".")
+    domain_token = parts[2] if len(parts) >= 3 else None
+    domain_name = STANDARD_DOMAIN_NAMES.get(domain_token)
+    if domain_name:
+        return f"{domain_name} ({standard_id})"
+    return standard_id
+
+
+ADMIN_PERSONA_INSTRUCTIONS = {
+    "student": "Give a brief, direct answer. Keep it simple and friendly.",
+    "parent": "Summarize the key points and list any action items for the family.",
+    "teacher": "Provide the full policy text and include the source link.",
 }
 
 INTENT_BADGES = {
@@ -28,6 +84,22 @@ INTENT_BADGES = {
     "admin_policy": "🏫 District Policy",
     "college_guidance": "🎓 College Guidance",
     "out_of_scope": "🚫 Out of Scope",
+}
+
+# The math corpus (chroma_db/) only contains NC Math 1/2/3 standards. Districts
+# outside NC (e.g. Frisco ISD, Plano ISD in Texas) must never receive NC
+# curriculum content in response to a math question — that would be a
+# cross-district/cross-state relevance leak, not a real answer for their state.
+DISTRICT_STATE = {
+    "wake_county_nc": "NC",
+    "frisco_isd_tx": "TX",
+    "plano_isd_tx": "TX",
+}
+
+DISTRICT_DISPLAY_NAME = {
+    "wake_county_nc": "Wake County NC",
+    "frisco_isd_tx": "Frisco ISD TX",
+    "plano_isd_tx": "Plano ISD TX",
 }
 
 
@@ -79,9 +151,28 @@ def _make_math_specialist(retriever):
             persona, PERSONA_INSTRUCTIONS["student"]
         )
 
+        district = state.get("district", "wake_county_nc")
+        district_state = DISTRICT_STATE.get(district)
+        if district_state != "NC":
+            display_name = DISTRICT_DISPLAY_NAME.get(district, district)
+            return {
+                **state,
+                "context_docs": [],
+                "response": (
+                    f"Our math curriculum content currently only covers North Carolina "
+                    f"Math 1/2/3 standards, and does not apply to {display_name}. "
+                    f"I don't want to give you NC-specific content that may not match "
+                    f"{display_name}'s curriculum. Please check with your teacher or "
+                    f"the district's academic office for TX curriculum standards."
+                ),
+            }
+
         docs = retriever.invoke(last_message)
         context = "\n\n".join(
-            [f"[{doc.metadata.get('standard_id')}] {doc.page_content}" for doc in docs]
+            [
+                f"[{describe_standard_id(doc.metadata.get('standard_id'))}] {doc.page_content}"
+                for doc in docs
+            ]
         )
 
         llm = _get_llm()
@@ -92,6 +183,21 @@ def _make_math_specialist(retriever):
                 "Answer using ONLY the provided educational standards context.\n"
                 "If the context does not contain the answer, say "
                 "'I cannot find this in our syllabus, please ask your teacher.'\n\n"
+                "Whenever you reference a standard code (e.g. NC.M1.A-CED.2), NEVER cite "
+                "the bare code alone. Always use the human-friendly domain name that is "
+                "already given to you in brackets in the context below, formatted as "
+                "'Domain Name (standard code)', e.g. 'Creating Equations (NC.M1.A-CED.2)'. "
+                "This helps students immediately relate to what the standard covers.\n\n"
+                "If the user asks how to plan, prepare, or study for the course, you MUST "
+                "build a concrete week-by-week plan grounded ONLY in the specific topics "
+                "found in the context above — never give generic advice like 'review the "
+                "standards' or 'practice solving equations'. Group the actual standards/"
+                "topics from the context into sequential weeks (e.g. 'Week 1: Creating "
+                "Equations (NC.M1.A-CED.2) — justify solving methods and steps', "
+                "'Week 2: Interpreting Functions (NC.M1.F-IF.1) — analyze tables and "
+                "graphs to determine if a relation is a function'), using as many weeks "
+                "as there are distinct topics in the context. Each week must name the "
+                "real topic content, not a placeholder.\n\n"
                 "Context:\n{context}"
             )),
             ("human", "{question}"),
@@ -113,13 +219,103 @@ def _make_math_specialist(retriever):
     return math_specialist
 
 
+def _get_admin_vectorstore():
+    embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
+    return Chroma(
+        collection_name="admin_docs",
+        persist_directory=ADMIN_DB_DIR,
+        embedding_function=embeddings,
+    )
+
+
 def admin_specialist(state: EdCopilotState) -> EdCopilotState:
+    query = state["messages"][-1]["content"]
+    persona = state.get("persona", "parent").lower()
+    district = state.get("district", "wake_county_nc")
+    persona_instruction = ADMIN_PERSONA_INSTRUCTIONS.get(
+        persona, ADMIN_PERSONA_INSTRUCTIONS["parent"]
+    )
+
+    if not os.path.exists(ADMIN_DB_DIR):
+        return {
+            **state,
+            "context_docs": [],
+            "response": (
+                "Admin content has not been ingested yet. "
+                "Please run `python src/admin_ingestion.py` to populate the knowledge base."
+            ),
+        }
+
+    try:
+        admin_vs = _get_admin_vectorstore()
+        docs = admin_vs.similarity_search(
+            query, k=5, filter={"district": district}
+        )
+        # Defence-in-depth: strip any chunk whose district tag does not match
+        # the requested district in case the vectorstore returns unfiltered
+        # results (e.g. a Chroma bug or a collection without metadata indexing).
+        docs = [d for d in docs if d.metadata.get("district") == district]
+    except Exception as e:
+        return {
+            **state,
+            "context_docs": [],
+            "response": f"Could not retrieve admin content: {e}",
+        }
+
+    if not docs:
+        return {
+            **state,
+            "context_docs": [],
+            "response": (
+                "I don't have specific information about that for the selected district. "
+                "Please check your district's official website for the most current details.\n\n"
+                "_This information was scraped from public district websites. "
+                "Verify at your district's official website._"
+            ),
+        }
+
+    context_parts = []
+    for doc in docs:
+        label = doc.metadata.get("label", "document")
+        source_url = doc.metadata.get("source_url", "")
+        context_parts.append(f"[{label} | {source_url}]\n{doc.page_content}")
+    context = "\n\n".join(context_parts)
+
+    llm = _get_llm()
+    admin_prompt = ChatPromptTemplate.from_messages([
+        ("system", (
+            "You are a District Policy Expert for a school assistant.\n"
+            "{persona_instruction}\n"
+            "Answer using ONLY the provided district content below.\n"
+            "If the context does not contain the answer, say "
+            "'I don't have that specific information — please check the district's official website.'\n"
+            "Always end your response with this disclaimer on its own line:\n"
+            "_This information was scraped from public district websites. "
+            "Verify at your district's official website._\n\n"
+            "Context:\n{context}"
+        )),
+        ("human", "{question}"),
+    ])
+
+    chain = admin_prompt | llm | StrOutputParser()
+    response = chain.invoke({
+        "persona_instruction": persona_instruction,
+        "context": context,
+        "question": query,
+    })
+
+    # Guarantee the disclaimer is always present, even if the LLM omits it.
+    _DISCLAIMER = (
+        "_This information was scraped from public district websites. "
+        "Verify at your district's official website._"
+    )
+    if _DISCLAIMER not in response:
+        response = response.rstrip() + "\n\n" + _DISCLAIMER
+
     return {
         **state,
-        "context_docs": [],
-        "response": (
-            "Admin domain coming soon — it will answer policy and calendar questions."
-        ),
+        "context_docs": docs,
+        "response": response,
     }
 
 
