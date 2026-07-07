@@ -32,8 +32,8 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
-from src.retrieval import get_hybrid_retriever
 from src.orchestrator import build_graph, EdCopilotState
+from src.district_registry import DistrictRegistry
 
 
 DATASET_NAME = "Ed-Copilot Gold Standard Q&A"
@@ -360,11 +360,11 @@ def main():
     client = Client()
     dataset_name = get_or_create_dataset(client)
 
-    print("\nLoading retrieval pipeline...")
-    retriever = get_hybrid_retriever()
+    print("\nLoading district registry...")
+    registry = DistrictRegistry()
 
     print("Building orchestrator graph...")
-    graph = build_graph(retriever)
+    graph = build_graph(registry)
 
     target_fn = make_target(graph)
 
