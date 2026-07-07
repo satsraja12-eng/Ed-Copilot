@@ -2,9 +2,15 @@ import streamlit as st
 from src.orchestrator import build_graph, EdCopilotState
 from src.retrieval import get_hybrid_retriever
 import os
+import json
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 load_dotenv()
+
+if os.environ.get("LANGCHAIN_API_KEY"):
+    os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
+    os.environ.setdefault("LANGCHAIN_PROJECT", "Ed-Copilot")
 
 st.set_page_config(page_title="Ed-Copilot", page_icon="🎓", layout="centered")
 
@@ -56,6 +62,42 @@ with st.sidebar:
     )
 
     st.divider()
+
+    INGESTION_LOG_PATH = os.path.join(os.path.dirname(__file__), "data", "ingestion_log.json")
+    st.subheader("📅 Knowledge Freshness")
+    try:
+        if os.path.exists(INGESTION_LOG_PATH):
+            with open(INGESTION_LOG_PATH, "r") as _f:
+                _log = json.load(_f)
+            if _log:
+                _last = _log[-1]
+                _run_at_raw = _last.get("run_at", "")
+                try:
+                    _run_dt = datetime.fromisoformat(_run_at_raw)
+                    _run_at_fmt = _run_dt.strftime("%b %d, %Y %H:%M UTC")
+                except Exception:
+                    _run_at_fmt = _run_at_raw
+                st.success(f"Last refreshed: **{_run_at_fmt}**")
+                _total = _last.get("total_chunks_indexed", 0)
+                st.caption(f"{_total} chunks indexed in last run")
+                _districts_info = _last.get("districts", {})
+                if _districts_info:
+                    with st.expander("Per-district details"):
+                        for _dk, _dv in _districts_info.items():
+                            _dname = _dv.get("name", _dk)
+                            _dchunks = _dv.get("chunks_indexed", 0)
+                            st.write(f"**{_dname}** — {_dchunks} chunks")
+            else:
+                st.info("No ingestion runs recorded yet.")
+        else:
+            st.info("No ingestion log found. Run `python src/admin_ingestion.py` to populate.")
+    except Exception as _e:
+        st.warning(f"Could not load ingestion log: {_e}")
+
+    st.divider()
+    st.page_link("pages/architecture.py", label="🏗️ System Architecture", icon=None)
+
+    st.divider()
     if st.button("🗑️ Clear chat"):
         st.session_state.messages = []
         st.rerun()
@@ -71,8 +113,13 @@ for message in st.session_state.messages:
         if message.get("sources"):
             with st.expander("View Retrieved Sources"):
                 for src in message["sources"]:
-                    st.write(f"**{src['standard_id']}** (Course: {src['course_id']}) — Rerank Score: {src['rerank_score']:.2f}")
-                    st.caption(src["snippet"])
+                    if "source_url" in src:
+                        st.write(f"**{src['label']}** — [{src['source_url']}]({src['source_url']})")
+                        st.caption(f"Fetched: {src.get('fetched_date', '—')}")
+                        st.caption(src["snippet"])
+                    else:
+                        st.write(f"**{src['standard_id']}** (Course: {src['course_id']}) — Rerank Score: {src['rerank_score']:.2f}")
+                        st.caption(src["snippet"])
 
 if prompt := st.chat_input("Ask about NC Math, school policy, or course planning..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -100,21 +147,38 @@ if prompt := st.chat_input("Ask about NC Math, school policy, or course planning
                 st.markdown(response)
 
                 sources = []
+                intent = result.get("intent", "")
                 if docs:
                     with st.expander("View Retrieved Sources"):
-                        for doc in docs:
-                            sid = doc.metadata.get("standard_id", "—")
-                            cid = doc.metadata.get("course_id", "—")
-                            score = doc.metadata.get("rerank_score", 0.0)
-                            snippet = doc.page_content[:300] + "..."
-                            st.write(f"**{sid}** (Course: {cid}) — Rerank Score: {score:.2f}")
-                            st.caption(snippet)
-                            sources.append({
-                                "standard_id": sid,
-                                "course_id": cid,
-                                "rerank_score": score,
-                                "snippet": snippet,
-                            })
+                        if intent == "admin_policy":
+                            for doc in docs:
+                                label = doc.metadata.get("label", "—")
+                                source_url = doc.metadata.get("source_url", "—")
+                                fetched = doc.metadata.get("fetched_date", "—")
+                                snippet = doc.page_content[:300] + "..."
+                                st.write(f"**{label}** — [{source_url}]({source_url})")
+                                st.caption(f"Fetched: {fetched}")
+                                st.caption(snippet)
+                                sources.append({
+                                    "label": label,
+                                    "source_url": source_url,
+                                    "fetched_date": fetched,
+                                    "snippet": snippet,
+                                })
+                        else:
+                            for doc in docs:
+                                sid = doc.metadata.get("standard_id", "—")
+                                cid = doc.metadata.get("course_id", "—")
+                                score = doc.metadata.get("rerank_score", 0.0)
+                                snippet = doc.page_content[:300] + "..."
+                                st.write(f"**{sid}** (Course: {cid}) — Rerank Score: {score:.2f}")
+                                st.caption(snippet)
+                                sources.append({
+                                    "standard_id": sid,
+                                    "course_id": cid,
+                                    "rerank_score": score,
+                                    "snippet": snippet,
+                                })
 
                 st.session_state.messages.append({
                     "role": "assistant",
