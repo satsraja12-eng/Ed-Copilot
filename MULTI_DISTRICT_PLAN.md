@@ -32,12 +32,16 @@
 | **Plugin hook system** | ✅ Live — `DistrictAgent` base class + `DistrictRegistry` auto-discovery |
 | **Orchestrator** | ✅ Registry-driven — district nodes registered automatically from YAML |
 | **Wake County NC agent** | ✅ NC Math 1/2/3 hybrid retriever + WCPSS admin policy |
-| **Frisco ISD agent** | ✅ Stub ready — `retrieve()` + `synthesize()` hooks wired, awaiting ingestion |
-| **Plano ISD agent** | ✅ Stub ready — same pattern, awaiting ingestion |
+| **Frisco ISD agent** | ✅ **Live** — real ChromaDB retrieval, groundedness scoring, safety guard (7 chunks ingested) |
+| **Plano ISD agent** | ✅ **Live** — real ChromaDB retrieval, groundedness scoring, safety guard (5 chunks ingested) |
 | **Tenant YAML configs** | ✅ All 3 districts configured under `config/tenants/` |
 | **LangSmith tracing** | ✅ Full trace on every conversation (`Ed-Copilot` project) |
 | **Evaluation suite** | ✅ 15 gold-standard Q&A pairs, LLM-as-judge (Faithfulness + Relevance) |
 | **District guardrail** | ✅ NC Math content blocked for TX districts |
+| **Ingestion pipeline** | ✅ `src/ingestion/pipeline.py` — normalize → chunk → tag → upsert into ChromaDB |
+| **TX crawlers** | ✅ `src/ingestion/crawlers.py` — Playwright + httpx, best-effort fallback to seed |
+| **Groundedness guardrail** | ✅ `src/guardrails/groundedness.py` — lexical overlap scorer + PII safety pre-check |
+| **Seed course data** | ✅ `data/seed/collin_county.json` — 12 Frisco + Plano HS math courses |
 
 ### Team Repo (`flower16/copilot-for-families`)
 
@@ -54,10 +58,11 @@
 
 | Capability | Status | Phase |
 |---|---|---|
-| Frisco + Plano ingestion (port from team repo) | ⬜ Pending | Phase 2 |
-| Groundedness verifier + retry loop | ⬜ Pending | Phase 2 |
+| Frisco + Plano ingestion (port from team repo) | ✅ Complete | Phase 2 |
+| Groundedness verifier + retry loop | ✅ Complete | Phase 2 |
 | User district registration (SQLite) | ⬜ Pending | Phase 3 |
 | Auto-routing from registered profile | ⬜ Pending | Phase 3 |
+| Live crawl refresh (scheduled nightly/weekly) | ⬜ Pending | Phase 3 |
 | Citations in responses | ⬜ Pending | Phase 5 |
 | Frisco/Plano LangSmith eval questions | ⬜ Pending | Phase 4 |
 
