@@ -400,37 +400,53 @@ def build_master_graph(district_agents: dict) -> CompiledGraph:
 
 ## 5. Phased Delivery
 
+> **Note on Phase 2:** Frisco & Plano ingestion + retrieval is **already fully built** in
+> `flower16/copilot-for-families`. Phase 2 is therefore an **integration task** (port +
+> wire up), not a build-from-scratch task. This halves the estimated effort for that phase.
+
 ### Phase 1 — Tenant Config + ChromaDB Refactor (2–3 days)
 - [ ] Create `config/tenants/` with 3 district YAML files
 - [ ] Refactor ChromaDB from 2 monolithic DBs → named collections per district+doc_type
 - [ ] Create `src/agents/base_agent.py` with shared pipeline template
-- [ ] Port groundedness verifier + retry loop from team repo
-- [ ] Create `src/agents/wake_county_agent.py` (wraps existing retrievers)
+- [ ] Port groundedness verifier + retry loop from team repo (`backend/app/guardrails/groundedness.py`)
+- [ ] Create `src/agents/wake_county_agent.py` (wraps existing NC Math + WCPSS retrievers)
 - [ ] Smoke test: Wake County still answers correctly
 
-### Phase 2 — Frisco & Plano Agents (2 days)
-- [ ] Port Frisco Apptegy API ingestion → ingest into `frisco_isd_tx__course_catalog`
-- [ ] Port Plano web scraper ingestion → ingest into `plano_isd_tx__course_catalog`
-- [ ] Create `src/agents/frisco_agent.py`
-- [ ] Create `src/agents/plano_agent.py`
-- [ ] Smoke test: Frisco/Plano course catalog questions answer correctly
+### Phase 2 — Integrate Frisco & Plano Agents from Team Repo (~1 day, not 2)
+> ✅ **Already built in `flower16/copilot-for-families`** — this is integration only.
+>
+> | Already done in team repo | Where |
+> |---|---|
+> | Frisco ISD course catalog crawler (Playwright + Apptegy API) | `backend/app/ingestion/crawlers.py` |
+> | Plano ISD course catalog crawler (httpx + PISD web) | `backend/app/ingestion/crawlers.py` |
+> | Ingestion pipeline (chunk, tag, role-visibility, upsert) | `backend/app/ingestion/pipeline.py` |
+> | Metadata-first retriever (district + doc_type + role filter) | `backend/app/rag/retriever.py` |
+> | ChromaDB vector store (tenant-scoped collections) | `backend/app/rag/vectorstore.py` |
+> | Frisco + Plano tenant config YAML | `configs/tenants/collin-county-tx.yaml` |
+
+**Integration tasks only:**
+- [ ] Copy `ingestion/` and `rag/` modules from team repo into `src/`
+- [ ] Adapt to Ed-Copilot's collection naming convention (`{district}__{doc_type}`)
+- [ ] Create `src/agents/frisco_agent.py` wiring team repo's retriever into base_agent pipeline
+- [ ] Create `src/agents/plano_agent.py` — same pattern
+- [ ] Smoke test: Frisco/Plano course catalog questions route and answer correctly
 
 ### Phase 3 — Registration + Master Orchestrator (1–2 days)
 - [ ] Build `src/district_registry.py` with SQLite backend
-- [ ] Update `src/orchestrator.py` → master graph routing to district sub-graphs
+- [ ] Update `src/orchestrator.py` → master graph routing to 3 district sub-graphs
 - [ ] Update `app.py` → registration screen on first visit, auto-route after
-- [ ] Remove manual district dropdown (replaced by profile)
+- [ ] Remove manual district dropdown (replaced by registered profile)
 - [ ] End-to-end test across all 3 districts
 
 ### Phase 4 — Evaluation Extension (1 day)
 - [ ] Add Frisco + Plano questions to LangSmith dataset (`tests/langsmith_eval.py`)
 - [ ] Add `retrieval_hit` evaluator for course catalog questions
-- [ ] Run baseline experiment for all 3 district agents
+- [ ] Run baseline experiment for all 3 district agents and compare
 
 ### Phase 5 — Polish (1 day)
-- [ ] Add citation display in Streamlit (from team repo's citation builder)
+- [ ] Add citation display in Streamlit (from team repo's `rag/citations.py`)
 - [ ] Update architecture diagram (`pages/architecture.py`)
-- [ ] Update `DEPLOY.md` with new ingestion steps
+- [ ] Update README with new ingestion + setup steps
 
 ---
 
