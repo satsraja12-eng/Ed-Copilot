@@ -1,326 +1,477 @@
 # Ed-Copilot Multi-District Architecture Plan
 
-> **Status:** Draft for team review  
-> **Target repo:** `satsraja12-eng/wc-math-rag` (Ed-Copilot) merges with `flower16/copilot-for-families` (Frisco/Plano ISD)  
-> **Goal:** Evolve Ed-Copilot into a true multi-district family assistant where each school district has a dedicated agent, and users register once to auto-route all future conversations.
+> **Status:** Phase 1 complete — plugin hook system live  
+> **Canonical repo:** `satsraja12-eng/Ed-Copilot`  
+> **Team repo:** `flower16/copilot-for-families` (Frisco/Plano ISD ingestion + retrieval already built)  
+> **Goal:** Multi-district K-12 family assistant where each school district is a self-contained plugin agent, and the master orchestrator routes conversations automatically.
 
 ---
 
 ## Table of Contents
-1. [Current State Assessment](#1-current-state-assessment)
-2. [Target Architecture](#2-target-architecture)
-3. [Building Blocks](#3-building-blocks)
-4. [Repo Merge Strategy](#4-repo-merge-strategy)
-5. [Phased Delivery](#5-phased-delivery)
-6. [File Structure After Merge](#6-file-structure-after-merge)
-7. [Key Decisions Needed](#7-key-decisions-needed)
-8. [Open Questions for Team](#8-open-questions-for-team)
+
+1. [Current State](#1-current-state)
+2. [Plugin Hook Architecture](#2-plugin-hook-architecture)
+3. [How to Add a New District (Step-by-Step)](#3-how-to-add-a-new-district-step-by-step)
+4. [Building Blocks](#4-building-blocks)
+5. [Repo Merge Strategy](#5-repo-merge-strategy)
+6. [Phased Delivery](#6-phased-delivery)
+7. [File Structure](#7-file-structure)
+8. [Key Decisions](#8-key-decisions)
+9. [Open Questions for Team](#9-open-questions-for-team)
+10. [User Manual](#10-user-manual)
+11. [References](#11-references)
 
 ---
 
-## 1. Current State Assessment
+## 1. Current State
 
-### This repo (`wc-math-rag` / Ed-Copilot)
+### Ed-Copilot (this repo)
 
-| Component | Implementation |
+| Component | Status |
 |---|---|
-| **Orchestrator** | LangGraph single graph — `classify_intent → route → specialist` |
-| **Math agent** | Hybrid retriever (ChromaDB + BM25 + CrossEncoder) over NC Math 1/2/3 PDFs |
-| **Admin agent** | ChromaDB `chroma_db_admin` collection filtered by `district` metadata |
-| **Districts** | Wake County NC, Frisco ISD TX, Plano ISD TX — UI dropdown only |
-| **District guardrail** | Math specialist checks district state; refuses NC content to TX users |
-| **User identity** | None — stateless per Streamlit session |
-| **Evaluation** | LangSmith dataset + LLM-as-judge (Faithfulness, Relevance, Retrieval Hit Rate) |
-| **Tracing** | LangSmith tracing enabled (`Ed-Copilot` project) |
+| **Plugin hook system** | ✅ Live — `DistrictAgent` base class + `DistrictRegistry` auto-discovery |
+| **Orchestrator** | ✅ Registry-driven — district nodes registered automatically from YAML |
+| **Wake County NC agent** | ✅ NC Math 1/2/3 hybrid retriever + WCPSS admin policy |
+| **Frisco ISD agent** | ✅ Stub ready — `retrieve()` + `synthesize()` hooks wired, awaiting ingestion |
+| **Plano ISD agent** | ✅ Stub ready — same pattern, awaiting ingestion |
+| **Tenant YAML configs** | ✅ All 3 districts configured under `config/tenants/` |
+| **LangSmith tracing** | ✅ Full trace on every conversation (`Ed-Copilot` project) |
+| **Evaluation suite** | ✅ 15 gold-standard Q&A pairs, LLM-as-judge (Faithfulness + Relevance) |
+| **District guardrail** | ✅ NC Math content blocked for TX districts |
 
-### Team repo (`flower16/copilot-for-families`)
+### Team Repo (`flower16/copilot-for-families`)
 
-| Component | Implementation |
+| Component | Status |
 |---|---|
-| **Tenant config** | YAML per county (`configs/tenants/collin-county-tx.yaml`) |
-| **Graph** | LangGraph: `analyzer → safety_pre → retrieve → agent → verifier → [retry] → responder` |
-| **Retrieval** | District + doc_type filtered retriever with relevance floor + reranking |
-| **Groundedness** | LLM-scored groundedness check with automatic retry (widens k on retry) |
-| **Course catalog** | Frisco via Apptegy API; Plano via PISD eschool web scraper |
-| **Auth** | `auth/security.py` (JWT-based user context) |
-| **Citations** | Structured citation builder from retrieved chunks |
+| **Frisco ISD course catalog ingestion** | ✅ Playwright + Apptegy API crawler |
+| **Plano ISD course catalog ingestion** | ✅ httpx + PISD web scraper |
+| **Ingestion pipeline** | ✅ Chunk, tag, role-visibility metadata, upsert |
+| **Metadata-first retriever** | ✅ district + doc_type + role filter |
+| **ChromaDB vectorstore** | ✅ Tenant-scoped collections |
+| **Tenant YAML configs** | ✅ `configs/tenants/collin-county-tx.yaml` |
 
-### Gap Analysis
+### Gap Analysis (remaining work)
 
-| Capability | Ed-Copilot | Team Repo | Target |
-|---|---|---|---|
-| Per-district dedicated agent | ❌ (single graph) | ❌ (single graph) | ✅ |
-| District auto-routing from user profile | ❌ | ❌ | ✅ |
-| User district registration | ❌ | ❌ | ✅ |
-| Groundedness verifier + retry | ❌ | ✅ | ✅ (adopt) |
-| Frisco/Plano course catalog ingestion | ❌ | ✅ | ✅ (adopt) |
-| NC Math 1/2/3 curriculum | ✅ | ❌ | ✅ (keep) |
-| LangSmith evaluation suite | ✅ | ❌ | ✅ (extend) |
-| Tenant YAML config | ❌ | ✅ | ✅ (adopt) |
-| Citations in responses | ❌ | ✅ | ✅ (adopt) |
+| Capability | Status | Phase |
+|---|---|---|
+| Frisco + Plano ingestion (port from team repo) | ⬜ Pending | Phase 2 |
+| Groundedness verifier + retry loop | ⬜ Pending | Phase 2 |
+| User district registration (SQLite) | ⬜ Pending | Phase 3 |
+| Auto-routing from registered profile | ⬜ Pending | Phase 3 |
+| Citations in responses | ⬜ Pending | Phase 5 |
+| Frisco/Plano LangSmith eval questions | ⬜ Pending | Phase 4 |
 
 ---
 
-## 2. Target Architecture
+## 2. Plugin Hook Architecture
+
+### Design Principle
+
+Adding a new district requires **exactly 2 files**. Zero changes to the orchestrator, app, or any other core code.
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                  Streamlit Frontend                       │
-│   ┌─────────────────────────────────────────────────┐   │
-│   │  District Registration (first visit only)        │   │
-│   │  → student/parent/teacher + school district      │   │
-│   │  → stored in SQLite user profile                 │   │
-│   └─────────────────────────────────────────────────┘   │
-│                         │                                 │
-│                 user_context (district + role)            │
-└─────────────────────────┼───────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────┐
-│           Top-Level Orchestrator (LangGraph)              │
-│                                                           │
-│   [registration_check] → [classify_intent]               │
-│                               │                           │
-│                    route_by_district()                    │
-│                      /        |        \                  │
-└─────────────────────/─────────┼─────────\────────────────┘
-                      │         │          │
-          ┌───────────▼──┐  ┌───▼──────┐  ┌▼─────────────┐
-          │ Wake County  │  │ Frisco   │  │   Plano ISD  │
-          │  NC Agent    │  │ ISD TX   │  │   TX Agent   │
-          │              │  │  Agent   │  │              │
-          │ Math 1/2/3   │  │ Course   │  │ Course       │
-          │ WCPSS Admin  │  │ Catalog  │  │ Catalog      │
-          │              │  │ Handbook │  │ Handbook     │
-          └──────────────┘  └──────────┘  └──────────────┘
-                │                │                │
-          ┌─────▼────────────────▼────────────────▼──────┐
-          │         Shared Agent Pipeline                   │
-          │  retrieve → synthesize → verify → [retry]      │
-          │  (groundedness check from team repo)            │
-          └────────────────────────────────────────────────┘
-                              │
-                              ▼
-                    LangSmith Tracing + Evaluation
+config/tenants/<district-id>.yaml     ← declare the district
+src/agents/<district_id>_agent.py     ← implement the agent
 ```
 
-### Routing Flow
+`DistrictRegistry` scans `config/tenants/` on startup, imports each agent module, and registers the agent with the master orchestrator automatically.
+
+---
+
+### System Diagram
 
 ```
-User message arrives
-      │
-      ▼
- Does user have a registered district? ──No──► Registration screen
-      │ Yes
-      ▼
- classify_intent()
-   → math_curriculum   ──► route_by_district → district agent (math node)
-   → admin_policy      ──► route_by_district → district agent (admin node)
-   → out_of_scope      ──► shared out_of_scope_handler (no LLM call)
-      │
-      ▼
- District Agent Sub-Graph
-   retrieve(district, doc_type, query)
-      │
-   synthesize(persona, query, context)
-      │
-   verify(groundedness_score)
-      │
-   score < threshold? ──Yes──► bump_retry → retrieve (wider k)
-      │ No
-   respond()
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Streamlit Frontend (app.py)                   │
+│                                                                       │
+│  Sidebar: Persona (Student / Parent / Teacher)                        │
+│           District  (registry-driven dropdown — auto-updates)         │
+│                              │                                        │
+│                    user_context {district, persona}                   │
+└──────────────────────────────┼────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│              DistrictRegistry  (src/district_registry.py)            │
+│                                                                       │
+│  On startup: scans config/tenants/*.yaml                              │
+│              imports agent_module from each YAML                      │
+│              reads module-level `agent` variable                      │
+│              registers {district_id: DistrictAgent instance}          │
+│                                                                       │
+│  Registered: frisco_isd_tx, plano_isd_tx, wake_county_nc             │
+└─────────────────────────────┬───────────────────────────────────────┘
+                               │  builds graph
+                               ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│              Master Orchestrator  (src/orchestrator.py)              │
+│                                                                       │
+│   [classify_intent]                                                   │
+│         │                                                             │
+│         ├─ intent + district → agent_wake_county_nc ──┐              │
+│         ├─ intent + district → agent_frisco_isd_tx  ──┤→ response    │
+│         ├─ intent + district → agent_plano_isd_tx   ──┘              │
+│         └─ out_of_scope     → out_of_scope_handler                   │
+│                                                                       │
+│   ← Graph nodes registered per district automatically by registry    │
+└─────────────────────────────────────────────────────────────────────┘
+                    │                │                │
+       ┌────────────▼───┐  ┌─────────▼──┐  ┌────────▼──────┐
+       │ WakeCountyAgent│  │FriscoAgent │  │ PlanoAgent    │
+       │                │  │            │  │               │
+       │ retrieve()     │  │ retrieve() │  │ retrieve()    │
+       │ synthesize()   │  │ synthesize │  │ synthesize()  │
+       │ handle() ✓     │  │ handle() ✓ │  │ handle() ✓    │
+       │                │  │            │  │               │
+       │ NC Math 1/2/3  │  │ Frisco     │  │ Plano ISD     │
+       │ WCPSS admin    │  │ course     │  │ course        │
+       │                │  │ catalog    │  │ catalog       │
+       └────────────────┘  └────────────┘  └───────────────┘
 ```
 
 ---
 
-## 3. Building Blocks
+### Class Contract (`src/agents/base_agent.py`)
 
-### 3.1 Tenant Config (YAML per district)
+```python
+class DistrictAgent(ABC):
 
-One YAML file per district defines all data sources, retrieval parameters, and district metadata. Adding a new district = one new YAML + one ingestion run. No code changes.
+    @property
+    @abstractmethod
+    def district_id(self) -> str:
+        """Unique key matching YAML district_id. e.g. 'frisco_isd_tx'"""
 
-**`config/tenants/wake-county-nc.yaml`**
+    @property
+    @abstractmethod
+    def supported_intents(self) -> List[str]:
+        """Intents this agent handles. e.g. ['course_catalog', 'admin_policy']
+        Orchestrator routes to out_of_scope for any other intent."""
+
+    @abstractmethod
+    def retrieve(self, query: str, intent: str, persona: str) -> List[Document]:
+        """Fetch relevant documents from ChromaDB (or any source)."""
+
+    @abstractmethod
+    def synthesize(self, query: str, docs: List[Document],
+                   intent: str, persona: str) -> str:
+        """Generate the answer grounded in retrieved docs."""
+
+    def handle(self, state: dict) -> dict:
+        """LangGraph node — wired for you. Do not override unless you
+        need custom state keys (e.g. citations, confidence score)."""
+        docs = self.retrieve(state["messages"][-1]["content"],
+                             state.get("intent"), state.get("persona"))
+        response = self.synthesize(...)
+        return {**state, "context_docs": docs, "response": response}
+```
+
+---
+
+### Auto-Discovery Flow (`src/district_registry.py`)
+
+```
+Startup
+  │
+  ├── glob("config/tenants/*.yaml")
+  │     ├── wake-county-nc.yaml   → agent_module: src.agents.wake_county_agent
+  │     ├── frisco-isd-tx.yaml    → agent_module: src.agents.frisco_isd_tx_agent
+  │     └── plano-isd-tx.yaml     → agent_module: src.agents.plano_isd_tx_agent
+  │
+  ├── importlib.import_module(agent_module)
+  │     └── reads module-level variable:  agent = <DistrictAgent subclass>()
+  │
+  └── registry._agents = {
+        "wake_county_nc": WakeCountyAgent(),
+        "frisco_isd_tx":  FriscoIsdAgent(),
+        "plano_isd_tx":   PlanoIsdAgent(),
+      }
+
+Graph build (orchestrator)
+  │
+  ├── for district_id in registry.all_district_ids():
+  │     graph.add_node(f"agent_{district_id}", agent.handle)
+  │
+  └── conditional_edges route to correct f"agent_{district_id}" by state.district
+```
+
+---
+
+### Orchestrator Routing (zero hardcoding)
+
+```python
+def route_after_classify(state) -> str:
+    intent   = state.get("intent", "out_of_scope")
+    district = state.get("district", "")
+
+    if intent == "out_of_scope":
+        return "out_of_scope_handler"
+
+    agent = registry.get(district)
+    if agent and intent in agent.supported_intents:
+        return f"agent_{district}"       # e.g. "agent_frisco_isd_tx"
+
+    return "out_of_scope_handler"
+```
+
+When a new district is registered, its node `agent_<district_id>` appears in the routing map automatically — no `if/elif` chain to maintain.
+
+---
+
+## 3. How to Add a New District (Step-by-Step)
+
+Example: adding **Allen ISD, TX**.
+
+### Step 1 — Create the tenant YAML
+
+**`config/tenants/allen-isd-tx.yaml`**
+
 ```yaml
-tenant_id: wake-county-nc
-county: Wake
-state: NC
-districts:
-  - id: wake_county_nc
-    name: Wake County Public School System
-    sources:
-      - type: pdf
-        path: data/math/
-        doc_type: math_curriculum
-        subject: math
-        courses: [M1, M2, M3]
-      - type: web
-        url: "https://wcpss.net/student-life/calendars-and-attendance"
-        doc_type: admin_policy
+district_id: allen_isd_tx
+name: Allen ISD
+state: TX
+county: Collin
+agent_module: src.agents.allen_isd_tx_agent   # ← points to your Python file
+intents:
+  - course_catalog
+  - admin_policy
 retrieval:
   k: 8
   rerank_n: 4
   min_score: 0.35
-  groundedness_threshold: 0.6
+sources:
+  course_catalog:
+    type: web
+    url: "https://www.allenisd.org/academics/course-catalog"
+    crawler: httpx
+  admin_policy:
+    type: pdf
+    path: data/allen/
+chroma:
+  collection_prefix: allen_isd_tx
+```
+
+---
+
+### Step 2 — Create the agent module
+
+**`src/agents/allen_isd_tx_agent.py`**
+
+```python
+from src.agents.base_agent import DistrictAgent
+from langchain_core.documents import Document
+from typing import List
+
+class AllenIsdAgent(DistrictAgent):
+
+    @property
+    def district_id(self) -> str:
+        return "allen_isd_tx"
+
+    @property
+    def supported_intents(self) -> List[str]:
+        return ["course_catalog", "admin_policy"]
+
+    def retrieve(self, query: str, intent: str, persona: str) -> List[Document]:
+        # Connect to ChromaDB collection allen_isd_tx__course_catalog
+        # (run ingestion first)
+        vs = self._get_vectorstore(intent)
+        return vs.similarity_search(query, k=8,
+               filter={"district": "allen_isd_tx", "doc_type": intent})
+
+    def synthesize(self, query: str, docs: List[Document],
+                   intent: str, persona: str) -> str:
+        # Build context, call LLM, return answer string
+        ...
+
+# Module-level variable — DistrictRegistry reads this automatically
+agent = AllenIsdAgent()
+```
+
+---
+
+### Step 3 — Ingest district content
+
+```bash
+# Run the ingestion script for Allen ISD
+python src/ingestion/allen_ingestion.py
+# Creates ChromaDB collection: allen_isd_tx__course_catalog
+```
+
+---
+
+### Step 4 — Start the app
+
+```bash
+streamlit run app.py --server.port 5000
+```
+
+**That's it.** On startup you will see:
+
+```
+[registry] Loaded agent for district: allen_isd_tx  (Allen ISD)
+```
+
+The district automatically appears in the sidebar dropdown. The orchestrator routes to it. No other changes needed.
+
+---
+
+### What NOT to Change
+
+| File | Change needed? |
+|---|---|
+| `src/orchestrator.py` | ❌ No |
+| `app.py` | ❌ No |
+| `src/district_registry.py` | ❌ No |
+| `src/agents/base_agent.py` | ❌ No |
+| Any existing agent file | ❌ No |
+
+---
+
+## 4. Building Blocks
+
+### 4.1 Tenant Config (YAML per district)
+
+Three district configs are live under `config/tenants/`:
+
+**`config/tenants/wake-county-nc.yaml`**
+```yaml
+district_id: wake_county_nc
+name: Wake County NC (WCPSS)
+state: NC
+county: Wake
+agent_module: src.agents.wake_county_agent
+intents:
+  - math_curriculum
+  - admin_policy
+  - college_guidance
+retrieval:
+  k: 8
+  rerank_n: 4
+  min_score: 0.35
+chroma:
+  math_db_dir: chroma_db
+  admin_db_dir: chroma_db_admin
 ```
 
 **`config/tenants/frisco-isd-tx.yaml`**
 ```yaml
-tenant_id: frisco-isd-tx
-county: Collin
+district_id: frisco_isd_tx
+name: Frisco ISD
 state: TX
-districts:
-  - id: frisco_isd_tx
-    name: Frisco ISD
-    sources:
-      - type: apptegy_api
-        url: "https://script.google.com/macros/s/..."
-        doc_type: course_catalog
-        subject: math
-      - type: pdf
-        path: data/frisco/
-        doc_type: admin_policy
+county: Collin
+agent_module: src.agents.frisco_isd_tx_agent
+intents:
+  - course_catalog
+  - admin_policy
 retrieval:
   k: 8
   rerank_n: 4
   min_score: 0.35
-  groundedness_threshold: 0.6
+sources:
+  course_catalog:
+    type: apptegy_api
+    url: "https://www.friscoisd.org/academics/course-catalog"
+    crawler: playwright
+chroma:
+  collection_prefix: frisco_isd_tx
 ```
 
 **`config/tenants/plano-isd-tx.yaml`**
 ```yaml
-tenant_id: plano-isd-tx
-county: Collin
+district_id: plano_isd_tx
+name: Plano ISD
 state: TX
-districts:
-  - id: plano_isd_tx
-    name: Plano ISD
-    sources:
-      - type: web
-        url: "https://www.pisd.edu/students-families-a6/eschool/catalog/mathematics"
-        doc_type: course_catalog
-        subject: math
-      - type: pdf
-        path: data/plano/
-        doc_type: admin_policy
+county: Collin
+agent_module: src.agents.plano_isd_tx_agent
+intents:
+  - course_catalog
+  - admin_policy
 retrieval:
   k: 8
   rerank_n: 4
   min_score: 0.35
-  groundedness_threshold: 0.6
+sources:
+  course_catalog:
+    type: web
+    url: "https://www.pisd.edu/students-families-a6/eschool/catalog/mathematics"
+    crawler: httpx
+chroma:
+  collection_prefix: plano_isd_tx
 ```
 
 ---
 
-### 3.2 ChromaDB Collection Strategy
+### 4.2 ChromaDB Collection Strategy
 
-Refactor from two monolithic DBs to named collections per district + doc_type:
+Named collections per district + doc_type. Collection naming: `{district_id}__{doc_type}`
 
 ```
-chroma_db/                        (single persist directory)
-  wake_county_nc__math_curriculum   ← existing NC Math 1/2/3 chunks
-  wake_county_nc__admin_policy      ← WCPSS calendars, attendance, AIG
-  frisco_isd_tx__course_catalog     ← from team repo Apptegy API ingestion
-  frisco_isd_tx__admin_policy       ← Frisco handbook PDFs
-  plano_isd_tx__course_catalog      ← from team repo PISD web scraper
-  plano_isd_tx__admin_policy        ← Plano handbook PDFs
+chroma_db/                          (single persist directory)
+  nc_math_standards                 ← existing NC Math 1/2/3 chunks (1,760 chunks)
+  admin_docs                        ← WCPSS calendars, attendance, AIG (filtered by district metadata)
+  frisco_isd_tx__course_catalog     ← Frisco course catalog (pending Phase 2 ingestion)
+  frisco_isd_tx__admin_policy       ← Frisco handbook PDFs (pending Phase 2 ingestion)
+  plano_isd_tx__course_catalog      ← Plano course catalog (pending Phase 2 ingestion)
+  plano_isd_tx__admin_policy        ← Plano handbook PDFs (pending Phase 2 ingestion)
 ```
-
-Collection naming convention: `{district_id}__{doc_type}`
 
 Benefits:
-- Clean isolation — no metadata-filter risk of cross-district leakage
-- Easy to add new districts or doc_types without schema migration
-- Each collection can be re-ingested independently
+- **Zero cross-district leakage** — each district's data is in a separate collection
+- **Independent re-ingestion** — refresh one district without touching others
+- **Easy to extend** — new doc_type = new collection, no schema migration
 
 ---
 
-### 3.3 District Agent Sub-Graphs
+### 4.3 Agent Communication Mechanism
 
-All three agents share the same **base pipeline** (retrieve → synthesize → verify → respond) but are initialized with district-specific retrievers and configs.
+All agents use **LangGraph shared state** — the recommended mechanism for single-deployment multi-district setups.
 
-```python
-# src/agents/base_agent.py
-def build_district_agent(district_id: str, retrievers: dict, tenant_config: dict):
-    """
-    Returns a compiled LangGraph sub-graph for a specific district.
-    retrievers: {"math_curriculum": Retriever, "admin_policy": Retriever, ...}
-    """
-    graph = StateGraph(DistrictAgentState)
-    graph.add_node("retrieve", make_retrieve_node(retrievers, tenant_config))
-    graph.add_node("synthesize", make_synthesize_node())
-    graph.add_node("verify", make_verify_node(tenant_config["groundedness_threshold"]))
-    graph.add_node("bump_retry", bump_retry_node)
-    graph.add_node("respond", respond_node)
-    # ... edges + conditional retry loop
-    return graph.compile()
+```
+EdCopilotState (TypedDict)
+  messages, persona, district, intent, intent_badge, context_docs, response
+       │
+       ▼
+ classify_intent()     reads → messages, district
+                       writes → intent, intent_badge
+       │
+       ▼
+ agent_<district_id>() reads → messages, intent, persona
+  (DistrictAgent.handle)       calls retrieve() + synthesize()
+                       writes → context_docs, response
 ```
 
-```python
-# src/agents/wake_county_agent.py
-def build():
-    config = load_tenant_config("wake-county-nc")
-    retrievers = {
-        "math_curriculum": WakeCountyMathRetriever(),   # existing hybrid retriever
-        "admin_policy": AdminRetriever("wake_county_nc"),
-    }
-    return build_district_agent("wake_county_nc", retrievers, config)
+**A2A (Agent-to-Agent) Protocol** is available for future production scale-out when each district needs physical isolation (separate deployments). Each agent would become a standalone service exposing `/.well-known/agent.json` and a `/run` endpoint. Migration path: extract each `DistrictAgent` subclass → separate Replit app → wire master orchestrator via HTTP POST.
 
-# src/agents/frisco_agent.py
-def build():
-    config = load_tenant_config("frisco-isd-tx")
-    retrievers = {
-        "course_catalog": FriscoRetriever(),   # from team repo
-        "admin_policy": AdminRetriever("frisco_isd_tx"),
-    }
-    return build_district_agent("frisco_isd_tx", retrievers, config)
-
-# src/agents/plano_agent.py
-def build():
-    config = load_tenant_config("plano-isd-tx")
-    retrievers = {
-        "course_catalog": PlanoRetriever(),    # from team repo
-        "admin_policy": AdminRetriever("plano_isd_tx"),
-    }
-    return build_district_agent("plano_isd_tx", retrievers, config)
-```
+| Mechanism | When to use |
+|---|---|
+| LangGraph shared state (current) | Single-app POC/pilot — full LangSmith tracing, zero network overhead |
+| A2A single-app multi-route | Pilot with real users — clean boundaries, still one deployment |
+| A2A separate apps | Production — true district isolation, independent release cycles |
 
 ---
 
-### 3.4 District Registration
+### 4.4 District Registration (Phase 3)
 
-**First-visit flow:**
+**First-visit flow (planned):**
 ```
-Streamlit page loads
-      │
-      ▼
- session_state["user_profile"] exists? ──No──► show registration form
-      │ Yes
- load from SQLite
-      │
-      ▼
- Normal chat interface (district shown in sidebar, editable)
-```
-
-**Storage:**
-```python
-# src/district_registry.py
-
-def register_user(session_id: str, district: str, role: str) -> UserProfile:
-    """Save user's district + role to SQLite. Returns profile."""
-
-def get_user_profile(session_id: str) -> UserProfile | None:
-    """Load existing profile. Returns None if not registered."""
-
-def update_district(session_id: str, new_district: str):
-    """Allow users to change district later."""
+Page loads
+  │
+  ▼
+session_state["user_profile"] exists? ──No──► registration form (district + role)
+  │ Yes                                              │
+  ▼                                                  ▼
+Load from SQLite ◄──────────────────── Save to SQLite
+  │
+  ▼
+Normal chat (district shown in sidebar, editable anytime)
 ```
 
 **SQLite schema (no external DB needed):**
 ```sql
 CREATE TABLE user_profiles (
-    session_id TEXT PRIMARY KEY,
-    district   TEXT NOT NULL,   -- wake_county_nc | frisco_isd_tx | plano_isd_tx
-    role       TEXT NOT NULL,   -- student | parent | teacher
+    session_id    TEXT PRIMARY KEY,
+    district      TEXT NOT NULL,   -- wake_county_nc | frisco_isd_tx | plano_isd_tx
+    role          TEXT NOT NULL,   -- student | parent | teacher
     registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at    TIMESTAMP
 );
@@ -328,199 +479,313 @@ CREATE TABLE user_profiles (
 
 ---
 
-### 3.5 Top-Level Orchestrator (Updated)
+## 5. Repo Merge Strategy
 
-```python
-# src/orchestrator.py (refactored)
+### What to adopt from `flower16/copilot-for-families`
 
-def build_master_graph(district_agents: dict) -> CompiledGraph:
-    """
-    district_agents: {
-        "wake_county_nc": <compiled LangGraph>,
-        "frisco_isd_tx":  <compiled LangGraph>,
-        "plano_isd_tx":   <compiled LangGraph>,
-    }
-    """
-    graph = StateGraph(MasterState)
-    graph.add_node("classify_intent", classify_intent_node)
-    graph.add_node("wake_county_nc",  wrap_district_agent(district_agents["wake_county_nc"]))
-    graph.add_node("frisco_isd_tx",   wrap_district_agent(district_agents["frisco_isd_tx"]))
-    graph.add_node("plano_isd_tx",    wrap_district_agent(district_agents["plano_isd_tx"]))
-    graph.add_node("out_of_scope",    out_of_scope_handler)
-
-    graph.add_edge(START, "classify_intent")
-    graph.add_conditional_edges(
-        "classify_intent",
-        route_by_district,      # returns district_id or "out_of_scope"
-        {
-            "wake_county_nc": "wake_county_nc",
-            "frisco_isd_tx":  "frisco_isd_tx",
-            "plano_isd_tx":   "plano_isd_tx",
-            "out_of_scope":   "out_of_scope",
-        }
-    )
-    return graph.compile()
-```
-
----
-
-## 4. Repo Merge Strategy
-
-### What we adopt from `flower16/copilot-for-families`
-
-| Component | Source path | Destination | Notes |
+| Component | Source | Destination | Status |
 |---|---|---|---|
-| Tenant YAML config | `configs/tenants/` | `config/tenants/` | Extend with NC district |
-| Query analyzer node | `backend/app/graph/nodes.py::query_analyzer` | `src/agents/base_agent.py` | Keyword-based doc_type detection |
-| Groundedness verifier | `backend/app/guardrails/groundedness.py` | `src/guardrails/groundedness.py` | LLM-scored, drives retry loop |
-| Retry loop | `backend/app/graph/build_graph.py` | `src/agents/base_agent.py` | verifier → bump_retry → retrieve |
-| Frisco ingestion | `backend/app/ingestion/` (Apptegy API) | `src/ingestion/frisco_ingestion.py` | Ingests Frisco course catalog |
-| Plano ingestion | `backend/app/ingestion/` (web scraper) | `src/ingestion/plano_ingestion.py` | Ingests Plano course catalog |
-| Citation builder | `backend/app/rag/citations.py` | `src/rag/citations.py` | Structured citations in responses |
-| Personas | `backend/app/graph/personas.py` | Merge with existing `PERSONA_INSTRUCTIONS` | Combine both patterns |
+| Tenant YAML configs | `configs/tenants/` | `config/tenants/` | ✅ Done (extended with NC) |
+| Frisco ingestion | `backend/app/ingestion/` | `src/ingestion/frisco_ingestion.py` | ⬜ Phase 2 |
+| Plano ingestion | `backend/app/ingestion/` | `src/ingestion/plano_ingestion.py` | ⬜ Phase 2 |
+| Metadata-first retriever | `backend/app/rag/retriever.py` | `src/rag/retriever.py` | ⬜ Phase 2 |
+| Groundedness verifier | `backend/app/guardrails/groundedness.py` | `src/guardrails/groundedness.py` | ⬜ Phase 2 |
+| Citation builder | `backend/app/rag/citations.py` | `src/rag/citations.py` | ⬜ Phase 5 |
+| Personas | `backend/app/graph/personas.py` | Merge with `PERSONA_INSTRUCTIONS` | ⬜ Phase 5 |
 
-### What we keep from `wc-math-rag`
+### What we keep from Ed-Copilot
 
-| Component | Why keep |
+| Component | Reason |
 |---|---|
-| Hybrid retriever (BM25 + CrossEncoder reranking) | Better retrieval quality for NC Math standards |
-| LangSmith evaluation suite (`tests/langsmith_eval.py`) | Already working; extend with more districts |
-| NC Math standard domain-name mapping | New feature — keep and extend to team repo |
-| `chroma_db/` NC Math chunks (1,760 chunks) | Already ingested and committed |
+| Hybrid retriever (BM25 + CrossEncoder reranking) | Better quality for NC Math standards |
+| LangSmith evaluation suite | Already working — extend with TX districts |
+| NC Math standard domain-name mapping | Unique feature — keep and extend |
+| `chroma_db/` NC Math chunks (1,760 chunks) | Already ingested |
+| Plugin hook architecture | New — district agents as first-class plugins |
 
 ### What we skip (for now)
 
 | Component | Reason |
 |---|---|
-| `auth/security.py` (JWT auth) | Adds infra complexity; SQLite district registration is sufficient for POC |
-| Docker / `docker-compose.yml` | Replit deployment handles this |
-| `backend/app/main.py` (FastAPI) | We stay with Streamlit for now |
+| `auth/security.py` (JWT) | Too much infra for POC — SQLite is sufficient |
+| Docker / `docker-compose.yml` | Replit handles deployment |
+| `backend/app/main.py` (FastAPI) | Staying with Streamlit |
 
 ---
 
-## 5. Phased Delivery
+## 6. Phased Delivery
 
-> **Note on Phase 2:** Frisco & Plano ingestion + retrieval is **already fully built** in
-> `flower16/copilot-for-families`. Phase 2 is therefore an **integration task** (port +
-> wire up), not a build-from-scratch task. This halves the estimated effort for that phase.
+### Phase 1 — Plugin Hook System + Tenant Config ✅ Complete
 
-### Phase 1 — Tenant Config + ChromaDB Refactor (2–3 days)
-- [ ] Create `config/tenants/` with 3 district YAML files
-- [ ] Refactor ChromaDB from 2 monolithic DBs → named collections per district+doc_type
-- [ ] Create `src/agents/base_agent.py` with shared pipeline template
-- [ ] Port groundedness verifier + retry loop from team repo (`backend/app/guardrails/groundedness.py`)
-- [ ] Create `src/agents/wake_county_agent.py` (wraps existing NC Math + WCPSS retrievers)
-- [ ] Smoke test: Wake County still answers correctly
+- [x] Create `config/tenants/` with 3 district YAML files
+- [x] Create `src/agents/base_agent.py` — `DistrictAgent` abstract base class
+- [x] Create `src/district_registry.py` — auto-discovery from YAML
+- [x] Refactor `src/orchestrator.py` — registry-driven node registration, zero hardcoding
+- [x] Create `src/agents/wake_county_agent.py` — wraps existing NC Math + WCPSS admin
+- [x] Create `src/agents/frisco_isd_tx_agent.py` — stub with hooks wired
+- [x] Create `src/agents/plano_isd_tx_agent.py` — stub with hooks wired
+- [x] Update `app.py` — uses `DistrictRegistry`, district dropdown is registry-driven
+- [x] Update `tests/langsmith_eval.py` — uses `DistrictRegistry`
+- [x] Smoke test: all 3 districts load, graph nodes registered, Wake County still answers correctly
 
-### Phase 2 — Integrate Frisco & Plano Agents from Team Repo (~1 day, not 2)
-> ✅ **Already built in `flower16/copilot-for-families`** — this is integration only.
->
-> | Already done in team repo | Where |
-> |---|---|
-> | Frisco ISD course catalog crawler (Playwright + Apptegy API) | `backend/app/ingestion/crawlers.py` |
-> | Plano ISD course catalog crawler (httpx + PISD web) | `backend/app/ingestion/crawlers.py` |
-> | Ingestion pipeline (chunk, tag, role-visibility, upsert) | `backend/app/ingestion/pipeline.py` |
-> | Metadata-first retriever (district + doc_type + role filter) | `backend/app/rag/retriever.py` |
-> | ChromaDB vector store (tenant-scoped collections) | `backend/app/rag/vectorstore.py` |
-> | Frisco + Plano tenant config YAML | `configs/tenants/collin-county-tx.yaml` |
+### Phase 2 — Frisco & Plano Agents: Integrate from Team Repo (~1 day)
+
+> ✅ **Already built in `flower16/copilot-for-families`** — integration only.
+
+| Already done in team repo | Where |
+|---|---|
+| Frisco ISD course catalog crawler (Playwright + Apptegy API) | `backend/app/ingestion/crawlers.py` |
+| Plano ISD course catalog crawler (httpx + PISD web) | `backend/app/ingestion/crawlers.py` |
+| Ingestion pipeline (chunk, tag, role-visibility, upsert) | `backend/app/ingestion/pipeline.py` |
+| Metadata-first retriever (district + doc_type + role filter) | `backend/app/rag/retriever.py` |
+| ChromaDB vectorstore (tenant-scoped collections) | `backend/app/rag/vectorstore.py` |
 
 **Integration tasks only:**
-- [ ] Copy `ingestion/` and `rag/` modules from team repo into `src/`
-- [ ] Adapt to Ed-Copilot's collection naming convention (`{district}__{doc_type}`)
-- [ ] Create `src/agents/frisco_agent.py` wiring team repo's retriever into base_agent pipeline
-- [ ] Create `src/agents/plano_agent.py` — same pattern
-- [ ] Smoke test: Frisco/Plano course catalog questions route and answer correctly
+- [ ] Copy `ingestion/` and `rag/` modules from team repo → `src/`
+- [ ] Adapt to Ed-Copilot collection naming convention (`{district}__{doc_type}`)
+- [ ] Port groundedness verifier + retry loop into `FriscoIsdAgent.handle()`
+- [ ] Run Frisco ingestion → populate `frisco_isd_tx__course_catalog`
+- [ ] Run Plano ingestion → populate `plano_isd_tx__course_catalog`
+- [ ] Smoke test: Frisco/Plano course catalog questions answer correctly
 
-### Phase 3 — Registration + Master Orchestrator (1–2 days)
-- [ ] Build `src/district_registry.py` with SQLite backend
-- [ ] Update `src/orchestrator.py` → master graph routing to 3 district sub-graphs
-- [ ] Update `app.py` → registration screen on first visit, auto-route after
-- [ ] Remove manual district dropdown (replaced by registered profile)
-- [ ] End-to-end test across all 3 districts
+### Phase 3 — Registration + Profile Auto-Routing (1–2 days)
+
+- [ ] Build `src/user_registry.py` with SQLite backend (session_id → district + role)
+- [ ] Add registration screen to `app.py` (shown on first visit only)
+- [ ] Auto-route from registered profile — remove manual district dropdown
+- [ ] Allow users to update district from sidebar
+- [ ] End-to-end test across all 3 districts with registered profiles
 
 ### Phase 4 — Evaluation Extension (1 day)
+
 - [ ] Add Frisco + Plano questions to LangSmith dataset (`tests/langsmith_eval.py`)
 - [ ] Add `retrieval_hit` evaluator for course catalog questions
-- [ ] Run baseline experiment for all 3 district agents and compare
+- [ ] Run baseline experiment for all 3 district agents and compare scores
 
 ### Phase 5 — Polish (1 day)
-- [ ] Add citation display in Streamlit (from team repo's `rag/citations.py`)
+
+- [ ] Add citation display in Streamlit (port team repo's `rag/citations.py`)
 - [ ] Update architecture diagram (`pages/architecture.py`)
-- [ ] Update README with new ingestion + setup steps
+- [ ] Update README with new setup + ingestion steps
 
 ---
 
-## 6. File Structure After Merge
+## 7. File Structure
 
 ```
 ed-copilot/
-├── app.py                          ← Updated: registration screen + auto-routing
+├── app.py                              ← Updated: uses DistrictRegistry, registry-driven dropdown
 ├── config/
 │   └── tenants/
-│       ├── wake-county-nc.yaml     ← NEW
-│       ├── frisco-isd-tx.yaml      ← NEW
-│       └── plano-isd-tx.yaml       ← NEW
+│       ├── wake-county-nc.yaml         ← ✅ Live
+│       ├── frisco-isd-tx.yaml          ← ✅ Live
+│       └── plano-isd-tx.yaml           ← ✅ Live
+│       └── <new-district>.yaml         ← DROP HERE to add a district
 ├── src/
-│   ├── orchestrator.py             ← REFACTORED: master routing graph
-│   ├── district_registry.py        ← NEW: SQLite user registration
+│   ├── orchestrator.py                 ← ✅ Registry-driven, zero per-district hardcoding
+│   ├── district_registry.py            ← ✅ Auto-discovers agents from config/tenants/
 │   ├── agents/
-│   │   ├── base_agent.py           ← NEW: shared pipeline template
-│   │   ├── wake_county_agent.py    ← NEW: wraps existing NC Math retriever
-│   │   ├── frisco_agent.py         ← NEW: Frisco district agent
-│   │   └── plano_agent.py          ← NEW: Plano district agent
-│   ├── retrieval.py                ← KEPT: NC Math hybrid retriever
-│   ├── ingestion.py                ← KEPT: NC Math ingestion
+│   │   ├── base_agent.py               ← ✅ DistrictAgent ABC — the plugin contract
+│   │   ├── wake_county_agent.py        ← ✅ NC Math + WCPSS admin, fully functional
+│   │   ├── frisco_isd_tx_agent.py      ← ✅ Hooks wired, awaiting ingestion (Phase 2)
+│   │   ├── plano_isd_tx_agent.py       ← ✅ Hooks wired, awaiting ingestion (Phase 2)
+│   │   └── <new>_agent.py              ← DROP HERE to implement a new agent
+│   ├── retrieval.py                    ← NC Math hybrid retriever (BM25 + CrossEncoder)
+│   ├── ingestion.py                    ← NC Math ingestion
+│   ├── admin_ingestion.py              ← WCPSS admin ingestion
 │   ├── ingestion/
-│   │   ├── frisco_ingestion.py     ← NEW: from team repo Apptegy API
-│   │   └── plano_ingestion.py      ← NEW: from team repo web scraper
+│   │   ├── frisco_ingestion.py         ← Phase 2: port from team repo
+│   │   └── plano_ingestion.py          ← Phase 2: port from team repo
 │   ├── guardrails/
-│   │   └── groundedness.py         ← NEW: from team repo
+│   │   └── groundedness.py             ← Phase 2: port from team repo
 │   └── rag/
-│       └── citations.py            ← NEW: from team repo
-├── chroma_db/                      ← REFACTORED: named collections
-│   (all collections in single persist dir)
+│       └── citations.py                ← Phase 5: port from team repo
+├── chroma_db/                          ← NC Math 1/2/3 (1,760 chunks)
+├── chroma_db_admin/                    ← WCPSS admin policy
 ├── pages/
-│   └── architecture.py             ← UPDATE: new multi-agent diagram
+│   └── architecture.py                 ← System architecture diagram (Streamlit page)
 ├── tests/
-│   ├── langsmith_eval.py           ← EXTEND: add Frisco/Plano questions
-│   └── evaluation.py               ← KEPT
+│   ├── langsmith_eval.py               ← ✅ Updated: uses DistrictRegistry
+│   ├── evaluation.py                   ← Offline evaluation
+│   └── test_admin_specialist.py        ← Unit tests for admin isolation + disclaimer
 ├── data/
-│   ├── math/                       ← KEPT: NC Math PDFs
-│   ├── frisco/                     ← NEW: Frisco admin PDFs
-│   └── plano/                      ← NEW: Plano admin PDFs
-└── MULTI_DISTRICT_PLAN.md          ← THIS FILE
+│   ├── math/                           ← NC Math PDFs
+│   ├── frisco/                         ← Frisco admin PDFs (Phase 2)
+│   └── plano/                          ← Plano admin PDFs (Phase 2)
+└── MULTI_DISTRICT_PLAN.md              ← This file
 ```
 
 ---
 
-## 7. Key Decisions Needed
+## 8. Key Decisions
 
-| # | Decision | Options | Recommendation |
+| # | Decision | Choice | Rationale |
 |---|---|---|---|
-| 1 | **Registration persistence** | Session-only vs. SQLite | SQLite — survives refresh |
-| 2 | **Single deployment or one per district** | One app vs. three | Single app — much simpler ops |
-| 3 | **ChromaDB: refactor or keep existing** | Named collections vs. keep two DBs | Named collections — cleaner isolation |
-| 4 | **Auth adoption** | Skip JWT / adopt team repo auth | Skip for POC — too much infra |
-| 5 | **Citation display** | Plain text vs. structured citation cards | Structured (team repo pattern) |
-| 6 | **Groundedness threshold** | 0.5 / 0.6 / 0.7 | 0.6 (team repo default) |
+| 1 | **Agent communication** | LangGraph shared state | Single-app POC — full LangSmith tracing, zero network overhead |
+| 2 | **District extensibility** | Plugin hook (YAML + Python file) | Zero orchestrator changes to add a district |
+| 3 | **Registration persistence** | SQLite (Phase 3) | Survives page refresh, no external DB needed |
+| 4 | **Single vs. multi-deployment** | Single Replit app | Simple ops; A2A migration path available when needed |
+| 5 | **ChromaDB layout** | Named collections `{district}__{doc_type}` | Clean isolation, independent re-ingestion |
+| 6 | **Auth** | Skip JWT for now | SQLite session profiles sufficient for POC |
+| 7 | **Groundedness threshold** | 0.6 | Team repo default — proven on Frisco/Plano |
 
 ---
 
-## 8. Open Questions for Team
+## 9. Open Questions for Team
 
-1. **Frisco/Plano ingestion credentials**: The Apptegy API URL is in the team repo — is it still live and does it require auth?
-2. **Admin PDF location**: Where are the most current Frisco/Plano handbook PDFs? (We have archived versions from Wayback Machine)
-3. **Which GitHub repo becomes the merged repo?** `wc-math-rag` (this one) or `copilot-for-families`? Or a new repo?
-4. **LangSmith project**: Should Frisco/Plano use the same `Ed-Copilot` LangSmith project or separate projects per district?
-5. **Evaluation ground truth**: For Frisco/Plano course catalog questions, who on the team can write/validate the gold-standard answers?
-6. **Deployment target**: Replit (current), or Docker + cloud once merged with team repo?
+1. **Frisco/Plano ingestion credentials**: Is the Apptegy API URL in the team repo still live? Does it require auth?
+2. **Admin PDF location**: Where are the most current Frisco/Plano handbook PDFs?
+3. **Canonical merged repo**: `satsraja12-eng/Ed-Copilot` or a new shared repo?
+4. **LangSmith project**: One shared `Ed-Copilot` project or separate projects per district?
+5. **Gold-standard answers**: Who on the team can write/validate Frisco/Plano Q&A pairs for the eval dataset?
+6. **Deployment target**: Replit (current) stays or Docker + cloud after team merge?
 
 ---
 
-## References
+## 10. User Manual
 
-- **This repo**: https://github.com/satsraja12-eng/wc-math-rag
+### Overview
+
+Ed-Copilot is a school assistant for K-12 families. It answers questions about math curriculum, district policies, and course planning — grounded strictly in official district content.
+
+---
+
+### Getting Started
+
+**Step 1 — Open the app**
+
+Navigate to the Ed-Copilot URL in your browser. The app loads in seconds.
+
+**Step 2 — Choose who you are (Sidebar → "Who are you?")**
+
+| Option | Best for |
+|---|---|
+| 🧑‍🎓 Student | Simple explanations, examples, encouragement |
+| 👨‍👩‍👧 Parent | Practical summaries, action items, key dates |
+| 👩‍🏫 Teacher | Full policy text, standard codes, source links |
+
+**Step 3 — Choose your district (Sidebar → "District")**
+
+| District | What it covers |
+|---|---|
+| Wake County NC | NC Math 1/2/3 curriculum standards + WCPSS admin policies |
+| Frisco ISD | Frisco ISD course catalog + admin policies *(ingestion Phase 2)* |
+| Plano ISD | Plano ISD course catalog + admin policies *(ingestion Phase 2)* |
+
+**Step 4 — Ask your question**
+
+Type in the chat box at the bottom. Press Enter or click Send.
+
+---
+
+### What You Can Ask
+
+#### Wake County NC
+
+**Math Curriculum (NC Math 1, 2, 3)**
+```
+What topics are covered in NC Math 1?
+Explain how to solve a multi-step linear equation step by step.
+What does standard NC.M2.G-SRT.6 mean in plain English?
+How do I prepare for NC Math 3? Give me a week-by-week study plan.
+What is the difference between NC Math 2 and NC Math 3?
+```
+
+**District Policy (WCPSS)**
+```
+When is spring break for Wake County schools?
+What is the WCPSS attendance policy?
+How does the AIG (Advanced Academics) program work?
+What are the grading policies for middle school?
+When is the last day of school?
+```
+
+**College & Course Planning**
+```
+What math courses should I take to prepare for engineering?
+What are the prerequisites for AP Calculus?
+How does taking NC Math 1 in 7th grade affect my high school plan?
+```
+
+#### Frisco ISD / Plano ISD *(available after Phase 2 ingestion)*
+
+```
+What math courses does Frisco ISD offer for 9th graders?
+What are the prerequisites for AP Statistics at Frisco ISD?
+What is Plano ISD's course sequence from Algebra 1 to Calculus?
+Does Plano ISD offer IB math courses?
+```
+
+---
+
+### Understanding the Response
+
+Every response shows:
+
+| Element | Meaning |
+|---|---|
+| **Intent badge** (top of response) | 📐 Math Curriculum / 🏫 District Policy / 📚 Course Catalog |
+| **Answer text** | Grounded strictly in official district content |
+| **"View Retrieved Sources"** (expandable) | Exact chunks retrieved from ChromaDB with source URLs |
+| **Disclaimer** (admin responses) | Reminder to verify at the official district website |
+
+---
+
+### Tips for Best Results
+
+| Tip | Example |
+|---|---|
+| Be specific about the course | "NC Math 2" not just "math" |
+| Include the grade or level | "8th grade" or "high school" |
+| Ask one question at a time | Clearer answers, better source retrieval |
+| For study plans, say so explicitly | "Give me a week-by-week plan for NC Math 1" |
+| For policy, name the topic | "attendance policy" not "school rules" |
+
+---
+
+### What Ed-Copilot Will Not Answer
+
+Ed-Copilot stays within school-related topics. It will politely decline:
+
+- Personal advice unrelated to school
+- Questions about other states' curricula when a TX district is selected
+- Opinions, predictions, or anything not in the official district content
+
+If the answer isn't in the district's content, it will say so clearly — and point you to the official website — rather than guessing.
+
+---
+
+### Troubleshooting
+
+| Issue | What to do |
+|---|---|
+| "I cannot find this in our syllabus" | Try rephrasing — use the standard code or topic name |
+| No sources shown | The question may have matched the LLM knowledge directly, not ChromaDB |
+| Wrong district answering | Check the District dropdown in the sidebar |
+| Frisco/Plano shows "not yet ingested" | Phase 2 ingestion is pending — Wake County NC is fully functional |
+| Slow response | The LLM inference on first load takes ~5 seconds; subsequent turns are faster |
+
+---
+
+### For Developers — Adding a District in 4 Steps
+
+See [Section 3 — How to Add a New District](#3-how-to-add-a-new-district-step-by-step) for the full walkthrough.
+
+**Quick summary:**
+1. `config/tenants/<district>.yaml` — declare district + point to agent module
+2. `src/agents/<district>_agent.py` — implement `retrieve()` + `synthesize()`, export `agent = YourAgent()`
+3. Run ingestion to populate ChromaDB
+4. Start the app — district appears automatically
+
+No changes to `orchestrator.py`, `app.py`, or `district_registry.py`.
+
+---
+
+## 11. References
+
+- **Ed-Copilot repo**: https://github.com/satsraja12-eng/Ed-Copilot
 - **Team repo**: https://github.com/flower16/copilot-for-families
 - **LangSmith project**: https://smith.langchain.com (project: `Ed-Copilot`)
 - **LangGraph docs**: https://langchain-ai.github.io/langgraph/
+- **Google A2A Protocol**: https://google.github.io/A2A/
 - **Deployed app**: Published via Replit
