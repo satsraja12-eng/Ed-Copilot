@@ -6,16 +6,19 @@ Output: exports/EdCopilot_Architecture.pptx
 Slides
 ------
  1. Title
- 2. Architecture block diagram  ← full visual
- 3. Plugin hook (2-file contract)
- 4. DistrictRegistry startup
- 5. Agent isolation
- 6. YAML manifest
- 7. LangGraph routing
- 8. ChromaDB collections
- 9. Groundedness guardrails
-10. 4-step district onboarding
-11. Phase roadmap
+ 2. Problem statement
+ 3. Vision
+ 4. High-level architecture
+ 5. Architecture block diagram  ← full detailed visual
+ 6. Plugin hook (2-file contract)
+ 7. DistrictRegistry startup
+ 8. Agent isolation
+ 9. YAML manifest
+10. LangGraph routing
+11. ChromaDB collections
+12. Groundedness guardrails
+13. 4-step district onboarding
+14. Phase roadmap
 """
 from __future__ import annotations
 
@@ -60,7 +63,7 @@ FOOTER_Y = Inches(6.95)
 FOOTER_H = Inches(0.35)
 TITLE_H  = Inches(1.05)
 
-TOTAL_SLIDES = 11
+TOTAL_SLIDES = 14
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -332,10 +335,112 @@ def slide_01_title(prs):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Slide 2 — Architecture Block Diagram
+# Slide 2 — Problem Statement
 # ─────────────────────────────────────────────────────────────────────────────
 
-def slide_02_diagram(prs):
+def slide_02_problem(prs):
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _set_bg(slide, BG_LIGHT)
+    _add_title(slide, "Families juggle disconnected, district-specific tools to answer basic school questions")
+
+    tf = _bullet_frame(slide, MARGIN_L, BODY_Y, CONTENT_W, BODY_H)
+    _add_para(tf, "The problem:", size_pt=18, bold=True, color=ACCENT)
+    for line in [
+        "Each school district publishes course catalogs, math pathways, and admin policy as static PDFs or web pages — not searchable, not conversational",
+        "Parents and students juggling multiple districts (moves, transfers, multi-school households) get no unified way to ask questions",
+        "Existing chatbots are single-purpose and hardcoded to one curriculum — cannot scale across districts without a rebuild per district",
+        "No safeguard against hallucinated answers about grading policy, course prerequisites, or graduation requirements — a wrong answer has real consequences",
+    ]:
+        _add_para(tf, f"  \u2022  {line}", size_pt=18, space_before_pt=12)
+
+    _add_para(tf, "The cost of getting this wrong:", size_pt=18, bold=True,
+              color=ACCENT, space_before_pt=20)
+    for line in [
+        "Families miss course prerequisites or enrollment deadlines",
+        "Support staff spend hours answering the same repetitive questions",
+        "Every new district requires a costly, from-scratch chatbot build",
+    ]:
+        _add_para(tf, f"  \u2022  {line}", size_pt=18, space_before_pt=8)
+
+    _add_footer(slide, 2)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Slide 3 — Vision
+# ─────────────────────────────────────────────────────────────────────────────
+
+def slide_03_vision(prs):
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _set_bg(slide, BG_DARK)
+    _add_title(slide, "One assistant, every district — grounded answers families can trust", dark_bg=True)
+
+    tf = _bullet_frame(slide, MARGIN_L, BODY_Y, CONTENT_W, BODY_H)
+    _add_para(tf, "Vision statement:", size_pt=18, bold=True, color=RGBColor(0x6E, 0xE7, 0xB7))
+    _add_para(tf,
+              "Ed-Copilot becomes the single conversational front door for K-12 families across any "
+              "number of school districts — grounded in each district's own curriculum and policy "
+              "data, safe by default, and extensible in hours, not months.",
+              size_pt=19, color=TEXT_LIGHT, space_before_pt=8)
+
+    _add_para(tf, "What this unlocks:", size_pt=18, bold=True,
+              color=RGBColor(0x6E, 0xE7, 0xB7), space_before_pt=22)
+    for line in [
+        "Plug-and-play districts — a new district onboards via 1 YAML file + 1 agent class, no core rebuild",
+        "Grounded, cited answers — every response traceable to source content, with guardrails against hallucination",
+        "One family, many districts — a single chat surface for households spanning multiple school systems",
+        "District-safe isolation — each district's data, agent, and retrieval pipeline are fully sandboxed",
+    ]:
+        _add_para(tf, f"  \u2022  {line}", size_pt=18, color=TEXT_LIGHT, space_before_pt=10)
+
+    _add_footer(slide, 3, dark_bg=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Slide 4 — High-Level Architecture
+# ─────────────────────────────────────────────────────────────────────────────
+
+def slide_04_highlevel(prs):
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _set_bg(slide, BG_LIGHT)
+    _add_title(slide, "High-level architecture: a plugin layer sits between the family and every district's data")
+
+    CW = CONTENT_W
+    LX = MARGIN_L
+    box_h = Inches(0.95)
+    gap   = Inches(0.55)
+    y0 = BODY_Y + Inches(0.15)
+
+    tiers = [
+        ("Family / User", "Parent · Student · Teacher — single chat interface", ACCENT_MID),
+        ("Ed-Copilot Platform", "Orchestration  ·  Plugin registry  ·  Guardrails  ·  Shared LLM", ACCENT),
+        ("District Plugins", "Wake County NC   ·   Frisco ISD TX   ·   Plano ISD TX   ·   + any future district", DB_COLOR),
+        ("District Source Data", "Curriculum catalogs  ·  Admin policy  ·  Course guides (per district)", LLM_COLOR),
+    ]
+
+    ys = []
+    for i, (label, sub, color) in enumerate(tiers):
+        y = y0 + i * (box_h + gap)
+        ys.append(y)
+        _add_box(slide, LX, y, CW, box_h, label, sub=sub,
+                  fill=color, font_size=17, sub_size=13)
+
+    for i in range(len(tiers) - 1):
+        cx = LX + CW / 2
+        _arrow(slide, cx, ys[i] + box_h, cx, ys[i + 1], color=ACCENT, width_pt=1.75)
+
+    note_y = ys[-1] + box_h + Inches(0.25)
+    _label(slide, MARGIN_L, note_y, CONTENT_W, Inches(0.4),
+           "Adding a district only touches the \"District Plugins\" and \"District Source Data\" tiers — the platform tier never changes",
+           size_pt=14, color=TEXT_MUTED, italic=True)
+
+    _add_footer(slide, 4)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Slide 5 — Architecture Block Diagram
+# ─────────────────────────────────────────────────────────────────────────────
+
+def slide_05_diagram(prs):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     _set_bg(slide, BG_LIGHT)
     _add_title(slide, "The system routes family questions through a 5-layer plugin architecture")
@@ -458,14 +563,14 @@ def slide_02_diagram(prs):
         _label(slide, leg_x + Inches(0.28), ly - Inches(0.02),
                Inches(2.4), Inches(0.25), lbl, size_pt=10, color=TEXT_MUTED)
 
-    _add_footer(slide, 2)
+    _add_footer(slide, 5)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Slide 3 — Plugin hook (2-file contract)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def slide_03_plugin(prs):
+def slide_06_plugin(prs):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     _set_bg(slide, BG_LIGHT)
     _add_title(slide, "Any school district can plug into Ed-Copilot by adding exactly 2 files")
@@ -489,14 +594,14 @@ def slide_03_plugin(prs):
 
     _add_para(tf, "Current deployment: Wake County NC  ·  Frisco ISD TX  ·  Plano ISD TX",
               size_pt=17, bold=True, color=ACCENT, space_before_pt=18)
-    _add_footer(slide, 3)
+    _add_footer(slide, 6)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Slide 4 — DistrictRegistry startup
 # ─────────────────────────────────────────────────────────────────────────────
 
-def slide_04_registry(prs):
+def slide_07_registry(prs):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     _set_bg(slide, BG_LIGHT)
     _add_title(slide, "DistrictRegistry scans YAML configs at startup and wires each agent automatically")
@@ -519,14 +624,14 @@ def slide_04_registry(prs):
         _add_para(tf, f"  {num}  {step}", size_pt=18, bold=True, space_before_pt=10, color=ACCENT)
         _add_para(tf, f"       {detail}", size_pt=17, space_before_pt=2)
 
-    _add_footer(slide, 4)
+    _add_footer(slide, 7)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Slide 5 — Agent isolation
 # ─────────────────────────────────────────────────────────────────────────────
 
-def slide_05_isolation(prs):
+def slide_08_isolation(prs):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     _set_bg(slide, BG_LIGHT)
     _add_title(slide, "Each district agent is isolated: shared interface, zero shared state")
@@ -571,14 +676,14 @@ def slide_05_isolation(prs):
     ]:
         _add_para(tf_r, f"  \u2022  {g}", size_pt=17, space_before_pt=12)
 
-    _add_footer(slide, 5)
+    _add_footer(slide, 8)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Slide 6 — YAML manifest
 # ─────────────────────────────────────────────────────────────────────────────
 
-def slide_06_yaml(prs):
+def slide_09_yaml(prs):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     _set_bg(slide, BG_LIGHT)
     _add_title(slide, "The YAML manifest is the only contract between a district and the platform")
@@ -612,14 +717,14 @@ def slide_06_yaml(prs):
     ]:
         _add_para(tf, f"  \u2022  {line}", size_pt=16, font_name=FONT_CODE, space_before_pt=5)
 
-    _add_footer(slide, 6)
+    _add_footer(slide, 9)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Slide 7 — LangGraph routing
 # ─────────────────────────────────────────────────────────────────────────────
 
-def slide_07_langgraph(prs):
+def slide_10_langgraph(prs):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     _set_bg(slide, BG_LIGHT)
     _add_title(slide, "LangGraph routes each query to exactly one district node via intent classification")
@@ -643,14 +748,14 @@ def slide_07_langgraph(prs):
 
     _add_para(tf, "Out-of-scope queries short-circuit at the conditional edge — no agent called",
               size_pt=17, italic=True, color=TEXT_MUTED, space_before_pt=14)
-    _add_footer(slide, 7)
+    _add_footer(slide, 10)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Slide 8 — ChromaDB collections
 # ─────────────────────────────────────────────────────────────────────────────
 
-def slide_08_chromadb(prs):
+def slide_11_chromadb(prs):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     _set_bg(slide, BG_LIGHT)
     _add_title(slide, "Frisco and Plano agents retrieve from district-isolated ChromaDB collections")
@@ -676,14 +781,14 @@ def slide_08_chromadb(prs):
            "Ingestion: seed JSON (offline) or --crawl flag to fetch from live district websites.",
            size_pt=13, color=TEXT_MUTED)
 
-    _add_footer(slide, 8)
+    _add_footer(slide, 11)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Slide 9 — Groundedness guardrails
 # ─────────────────────────────────────────────────────────────────────────────
 
-def slide_09_guardrails(prs):
+def slide_12_guardrails(prs):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     _set_bg(slide, BG_LIGHT)
     _add_title(slide, "Groundedness guardrails prevent hallucinated and unsafe responses before delivery")
@@ -713,14 +818,14 @@ def slide_09_guardrails(prs):
     _add_para(tf, "  Wake County NC: LangSmith Faithfulness + Relevance eval  (LLM-as-judge, 15 Q&A pairs)",
               size_pt=17, bold=True, color=ACCENT, space_before_pt=14)
 
-    _add_footer(slide, 9)
+    _add_footer(slide, 12)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Slide 10 — 4-step onboarding
 # ─────────────────────────────────────────────────────────────────────────────
 
-def slide_10_onboard(prs):
+def slide_13_onboard(prs):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     _set_bg(slide, BG_LIGHT)
     _add_title(slide, "Adding a 4th district requires one YAML file, one Python class, and an ingestion run")
@@ -759,14 +864,14 @@ def slide_10_onboard(prs):
            "No changes to: orchestrator.py  ·  app.py  ·  district_registry.py  ·  any other district's code",
            size_pt=14, color=TEXT_MUTED, italic=True)
 
-    _add_footer(slide, 10)
+    _add_footer(slide, 13)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Slide 11 — Phase roadmap
 # ─────────────────────────────────────────────────────────────────────────────
 
-def slide_11_roadmap(prs):
+def slide_14_roadmap(prs):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     _set_bg(slide, BG_LIGHT)
     _add_title(slide, "Phases 1 and 2 are complete; Phases 3-5 deliver user profiles, evals, and citations")
@@ -781,7 +886,7 @@ def slide_11_roadmap(prs):
     ]
     _add_table(slide, MARGIN_L, BODY_Y, CONTENT_W, rows,
                col_widths=[1.5, 8.5, 2])
-    _add_footer(slide, 11)
+    _add_footer(slide, 14)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -794,16 +899,19 @@ def build():
     prs.slide_height = H
 
     slide_01_title(prs)
-    slide_02_diagram(prs)
-    slide_03_plugin(prs)
-    slide_04_registry(prs)
-    slide_05_isolation(prs)
-    slide_06_yaml(prs)
-    slide_07_langgraph(prs)
-    slide_08_chromadb(prs)
-    slide_09_guardrails(prs)
-    slide_10_onboard(prs)
-    slide_11_roadmap(prs)
+    slide_02_problem(prs)
+    slide_03_vision(prs)
+    slide_04_highlevel(prs)
+    slide_05_diagram(prs)
+    slide_06_plugin(prs)
+    slide_07_registry(prs)
+    slide_08_isolation(prs)
+    slide_09_yaml(prs)
+    slide_10_langgraph(prs)
+    slide_11_chromadb(prs)
+    slide_12_guardrails(prs)
+    slide_13_onboard(prs)
+    slide_14_roadmap(prs)
 
     os.makedirs("exports", exist_ok=True)
     out = "exports/EdCopilot_Architecture.pptx"
